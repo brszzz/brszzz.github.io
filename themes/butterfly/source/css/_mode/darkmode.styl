@@ -199,37 +199,56 @@ if hexo-config('darkmode.enable') || hexo-config('display_mode') == 'dark'
       color: alpha(#FFFFFF, .7) !important
 
     // pagination & related posts
+    --default-bg-color: #5a5a5a
+
     .pagination-related
-      background: #3a3a3a
-      addBorderRadius(12px)
+      background: #5a5a5a
+      addBorderRadius(8px)
       box-shadow: 0 2px 8px rgba(0, 0, 0, .3)
 
       .cover
-        opacity: .6
+        opacity: .3
 
       .info
         .info-1
+          padding: 10px 20px
+
           .info-item-1
             color: alpha(#FFFFFF, .5)
+            font-size: 80%
 
           .info-item-2
-            color: alpha(#FFFFFF, .9)
+            color: alpha(#FFFFFF, .95)
+            font-size: 90%
 
         .info-2
+          padding: 10px 20px
+
           .info-item-1
             color: alpha(#FFFFFF, .7)
+            font-size: 85%
+
+    #pagination
+      .pagination-related
+        height: 75px
 
     .relatedPosts
       & > .headline
         color: alpha(#FFFFFF, .85)
+        font-size: 1.2em
 
       & > .relatedPosts-list
         & > a
-          background: #3a3a3a
+          height: 100px
+          background: #5a5a5a
+          addBorderRadius(8px)
           box-shadow: 0 2px 8px rgba(0, 0, 0, .3)
 
           .cover
-            opacity: .6
+            opacity: .3
+
+          +maxWidth768()
+            height: 75px
 
     // waline
     #waline-wrap
