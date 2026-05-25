@@ -1,0 +1,129 @@
+# Butterfly Theme Configuration
+
+# Cover image settings for archives
+cover:
+  archives_enable: true
+
+# Navigation
+nav:
+  display_title: true
+  fixed: true
+
+menu:
+  Home: / || fas fa-home
+  Archives: /archives/ || fas fa-archive
+  Tags: /tags/ || fas fa-tags
+  Categories: /categories/ || fas fa-folder
+  # About: /about/ || fas fa-user
+
+# Code blocks
+code_blocks:
+  theme: darker
+  macStyle: false
+  copy: true
+  language: true
+
+# Social links (update with your own)
+social:
+  GitHub: https://github.com/brszzz || fab fa-github || '#24292e'
+
+# Avatar (add your own image to source/img/)
+avatar:
+  img: /img/avatar.png
+  effect: true
+
+# Advertisement
+social_icons:
+  Github: fab fa-github
+
+# Post meta display
+post_meta:
+  page:
+    date_type: created
+    date_format: date
+    categories: true
+    tags: true
+    label: true
+  post:
+    date_type: both
+    date_format: date
+    categories: true
+    tags: true
+    label: true
+
+# Footer
+footer:
+  owner:
+    since: 2026
+    powered: true
+    copyright: true
+
+# Sidebar
+aside:
+  enable: true
+  hide: false
+  button: true
+  mobile: true
+  position: right
+  card_author:
+    enable: true
+    description: 'A personal blog'
+    button:
+      enable: true
+      icon: fab fa-github
+      text: Follow Me
+      link: https://github.com/brszzz
+  card_announcement:
+    enable: true
+    content: 'Welcome to my blog!'
+  card_categories:
+    enable: true
+    limit: 8
+    expand: none
+  card_tags:
+    enable: true
+    limit: 40
+  card_archives:
+    enable: true
+  card_webinfo:
+    enable: true
+    post_count: true
+    last_push_date: true
+
+# Post display
+index_post_content:
+  method: 2
+  length: 200
+
+# Share
+sharejs:
+  enable: true
+  sites: facebook,twitter,weibo,wechat,qq
+
+# Comments
+comments:
+  use: false
+
+# Search
+local_search:
+  enable: false
+
+# Word count
+wordcount:
+  enable: true
+  post_wordcount: true
+  min2read: true
+
+# Beautify
+beautify:
+  enable: true
+  field: post
+  title-prefix-icon: '\f0c1'
+
+# Article license
+post_copyright:
+  enable: true
+  decode: false
+  author_href: https://github.com/brszzz
+  license: CC BY-NC-SA 4.0
+  license_url: https://creativecommons.org/licenses/by-nc-sa/4.0/
