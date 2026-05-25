@@ -1,37 +1,37 @@
 if hexo-config('darkmode.enable') || hexo-config('display_mode') == 'dark'
   [data-theme='dark']
-    --global-bg: darken(#121212, 2)
+    --global-bg: darken(#4d4d4d, 2)
     --font-color: alpha(#FFFFFF, .7)
     --hr-border: alpha(#FFFFFF, .4)
     --hr-before-color: alpha(#FFFFFF, .7)
-    --search-bg: #121212
+    --search-bg: #4d4d4d
     --search-input-color: alpha(#FFFFFF, .7)
     --search-a-color: alpha(#FFFFFF, .7)
-    --preloader-bg: darken(#121212, 2)
+    --preloader-bg: darken(#4d4d4d, 2)
     --preloader-color: alpha(#FFFFFF, .7)
-    --tab-border-color: #2c2c2c
-    --tab-button-bg: #2c2c2c
+    --tab-border-color: #5a5a5a
+    --tab-button-bg: #5a5a5a
     --tab-button-color: alpha(#FFFFFF, .7)
-    --tab-button-hover-bg: lighten(#121212, 15)
-    --tab-button-active-bg: #121212
-    --card-bg: #121212
-    --sidebar-bg: #121212
-    --sidebar-menu-bg: lighten(#121212, 5)
-    --btn-hover-color: lighten(#121212, 40)
+    --tab-button-hover-bg: lighten(#4d4d4d, 8)
+    --tab-button-active-bg: #4d4d4d
+    --card-bg: #4d4d4d
+    --sidebar-bg: #4d4d4d
+    --sidebar-menu-bg: lighten(#4d4d4d, 3)
+    --btn-hover-color: lighten(#4d4d4d, 22)
     --btn-color: alpha(#FFFFFF, .7)
-    --btn-bg: lighten(#121212, 5)
-    --text-bg-hover: lighten(#121212, 15)
+    --btn-bg: lighten(#4d4d4d, 3)
+    --text-bg-hover: lighten(#4d4d4d, 8)
     --light-grey: alpha(#FFFFFF, .7)
     --dark-grey: alpha(#FFFFFF, .2)
     --white: alpha(#FFFFFF, .9)
     --text-highlight-color: alpha(#FFFFFF, .9)
     --blockquote-color: alpha(#FFFFFF, .7)
-    --blockquote-bg: lighten(#121212, 10)
-    --reward-pop: lighten(#121212, 10)
+    --blockquote-bg: lighten(#4d4d4d, 5)
+    --reward-pop: lighten(#4d4d4d, 5)
     --toc-link-color: alpha(#FFFFFF, .6)
-    --scrollbar-color: lighten(#121212, 25)
-    --timeline-bg: lighten(#121212, 5)
-    --zoom-bg: #121212
+    --scrollbar-color: lighten(#4d4d4d, 15)
+    --timeline-bg: lighten(#4d4d4d, 5)
+    --zoom-bg: #4d4d4d
     --mark-bg: alpha($dark-black, .6)
     --btn-color: darken($btn-color, 20%)
     --btn-default-color: lighten($btn-default-color, 20%)
@@ -93,10 +93,10 @@ if hexo-config('darkmode.enable') || hexo-config('display_mode') == 'dark'
 
     .container
       code
-        background: #2c2c2c
+        background: #5a5a5a
 
       pre > code
-        background: lighten(#121212, 2)
+        background: lighten(#4d4d4d, 2)
 
       figure.highlight
         box-shadow: none
@@ -117,13 +117,13 @@ if hexo-config('darkmode.enable') || hexo-config('display_mode') == 'dark'
     #page-header
       &.nav-fixed > #nav,
       &.not-top-img > #nav
-        background: alpha(#121212, .8)
+        background: alpha(#4d4d4d, .8)
         box-shadow: 0 5px 6px -5px rgba(133, 133, 133, 0)
 
     #post-comment
       .comment-switch
         if hexo-config('comments.text')
-          background: #2c2c2c !important
+          background: #5a5a5a !important
 
         #switch-btn
           filter: brightness(.8)
@@ -165,27 +165,27 @@ if hexo-config('darkmode.enable') || hexo-config('display_mode') == 'dark'
           color: alpha(#FFFFFF, .7)
 
         .dsqjs-order-label
-          background-color: lighten(#121212, 5)
+          background-color: lighten(#4d4d4d, 5)
 
         .dsqjs-post-body
           color: alpha(#FFFFFF, .7)
 
           code,
           pre
-            background: #2c2c2c
+            background: #5a5a5a
 
           blockquote
             color: alpha(#FFFFFF, .7)
 
     #artitalk_main #lazy
-      background: #121212
+      background: #4d4d4d
 
     #operare_artitalk .c2
-      background: #121212
+      background: #4d4d4d
 
     #card-toc
       +maxWidth900()
-        background: lighten(#121212, 5)
+        background: lighten(#4d4d4d, 5)
 
     // artalk
     .artalk.atk-dark-mode,
