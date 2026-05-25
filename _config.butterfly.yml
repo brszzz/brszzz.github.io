@@ -113,7 +113,16 @@ sharejs:
 
 # Comments
 comments:
-  use: false
+  use: Utterances
+  lazyload: true
+
+# Utterances
+# https://utteranc.es/
+utterances:
+  repo: brszzz/brszzz.github.io
+  issue_term: pathname
+  light_theme: github-light
+  dark_theme: dark-blue
 
 # Search
 local_search:
