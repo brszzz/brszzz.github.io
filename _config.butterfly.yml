@@ -5,6 +5,12 @@ index_img: /img/banner.jpg
 default_top_img: /img/banner.jpg
 disable_top_img: false
 
+# Visitor count (Busuanzi 不蒜子)
+busuanzi:
+  site_uv: true
+  site_pv: true
+  page_pv: true
+
 # Cover image settings for archives
 cover:
   archives_enable: true
@@ -35,7 +41,7 @@ social:
 # Avatar (add your own image to source/img/)
 avatar:
   img: /img/avatar.jpg
-  effect: true
+  effect: false
 
 # Advertisement
 social_icons:
@@ -132,3 +138,9 @@ post_copyright:
   author_href: https://github.com/brszzz
   license: CC BY-NC-SA 4.0
   license_url: https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+# Inject dark mode as default
+inject:
+  head:
+  bottom:
+    - <script>document.documentElement.setAttribute('data-theme','dark');localStorage.setItem('data-theme','dark');</script>
