@@ -198,6 +198,39 @@ if hexo-config('darkmode.enable') || hexo-config('display_mode') == 'dark'
     .atk-badge
       color: alpha(#FFFFFF, .7) !important
 
+    // pagination & related posts
+    .pagination-related
+      background: #3a3a3a
+      addBorderRadius(12px)
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .3)
+
+      .cover
+        opacity: .6
+
+      .info
+        .info-1
+          .info-item-1
+            color: alpha(#FFFFFF, .5)
+
+          .info-item-2
+            color: alpha(#FFFFFF, .9)
+
+        .info-2
+          .info-item-1
+            color: alpha(#FFFFFF, .7)
+
+    .relatedPosts
+      & > .headline
+        color: alpha(#FFFFFF, .85)
+
+      & > .relatedPosts-list
+        & > a
+          background: #3a3a3a
+          box-shadow: 0 2px 8px rgba(0, 0, 0, .3)
+
+          .cover
+            opacity: .6
+
     // waline
     #waline-wrap
       --waline-color: alpha(#FFFFFF, .7)
