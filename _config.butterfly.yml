@@ -34,7 +34,7 @@ social:
 
 # Avatar (add your own image to source/img/)
 avatar:
-  img: /img/avatar.png
+  img: /img/avatar.jpg
   effect: true
 
 # Advertisement
