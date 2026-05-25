@@ -1,5 +1,10 @@
 # Butterfly Theme Configuration
 
+# Banner images
+index_img: /img/banner.jpg
+default_top_img: /img/banner.jpg
+disable_top_img: false
+
 # Cover image settings for archives
 cover:
   archives_enable: true
