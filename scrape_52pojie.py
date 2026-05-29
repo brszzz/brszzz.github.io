@@ -102,6 +102,44 @@ def extract_post_content(text):
     # Remove <ignore_js_op> wrappers but keep image content
     content = re.sub(r'<ignore_js_op>(.*?)</ignore_js_op>', r'\1', content, flags=re.DOTALL)
 
+    # Handle code blocks: <pre class="brush: LANG;">CODE</pre>
+    # These are wrapped in <div style="padding:15px 0;">...</div> but we just target the pre tags
+    LANG_MAP = {
+        'asm': '', 'c': 'c', 'c++': 'cpp', 'cpp': 'cpp',
+        'java': 'java', 'javascript': 'javascript', 'js': 'javascript',
+        'shell': 'bash', 'bash': 'bash', 'python': 'python',
+        'xml': 'xml', 'html': 'html', 'css': 'css',
+    }
+
+    def replace_pre(m):
+        lang_attr = m.group(1) or ''
+        code = m.group(2) or ''
+        lang = LANG_MAP.get(lang_attr.strip().lower(), '')
+        code = html.unescape(code)
+        return f'\n```{lang}\n{code}\n```\n'
+
+    content = re.sub(
+        r'<pre class="brush:\s*([^;"]+)[^"]*"[^>]*>(.*?)</pre>',
+        replace_pre,
+        content,
+        flags=re.DOTALL
+    )
+
+    # Remove the code block wrapper divs: <div style="padding:15px 0;"> and the inner header div
+    content = re.sub(r'<div style="padding:15px\s*0[^"]*">\s*<div[^>]*>.*?</div>', '', content, flags=re.DOTALL)
+    # Remove orphaned closing divs from code block wrappers (the ones immediately before/after ```)
+    content = re.sub(r'</div>\s*(\n```)', r'\1', content)
+    content = re.sub(r'(```\n)\s*</div>', r'\1', content)
+
+    # Remove any remaining [Lang] 纯文本查看 复制 code text (orphaned from inline code markers)
+    content = re.sub(r'\[[^\]]*\]\s*纯文本查看\s+复制代码\s*', '', content)
+
+    # Handle <blockquote>
+    content = re.sub(r'<blockquote>(.*?)</blockquote>', r'\n> \1\n', content, flags=re.DOTALL)
+
+    # Handle quotes
+    content = re.sub(r'<div class="quote"[^>]*>(.*?)</div>', r'\n> \1\n', content, flags=re.DOTALL)
+
     # Extract images from zoomfile/img tags
     def replace_img(m):
         zoomfile = re.search(r'zoomfile="([^"]+)"', m.group(0))
@@ -138,15 +176,11 @@ def extract_post_content(text):
     # Convert links
     content = re.sub(r'<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', r'[\2](\1)', content)
 
-    # Strip remaining HTML tags
-    content = re.sub(r'</?(?:div|span|p|ul|ol|li|table|tr|td|th|tbody|thead|em|i|u|s|dl|dt|dd)[^>]*>', '', content)
-
-    # Handle code blocks
-    content = re.sub(r'<div class="blockcode"[^>]*>.*?<code>(.*?)</code>.*?</div>', r'\n```\n\1\n```\n', content, flags=re.DOTALL)
+    # Handle inline <code> tags (after pre blocks are done)
     content = re.sub(r'<code>(.*?)</code>', r'`\1`', content)
 
-    # Handle quotes
-    content = re.sub(r'<div class="quote"[^>]*>(.*?)</div>', r'\n> \1\n', content, flags=re.DOTALL)
+    # Strip remaining HTML tags (div, span, p, ul, ol, li, table, tr, td, th, tbody, thead, em, i, u, s, dl, dt, dd)
+    content = re.sub(r'</?(?:div|span|p|ul|ol|li|table|tr|td|th|tbody|thead|em|i|u|s|dl|dt|dd)[^>]*>', '', content)
 
     # Decode HTML entities
     content = html.unescape(content)
@@ -214,7 +248,31 @@ def generate_tags(title, forum_section, content):
 
     return sorted(list(tags))[:12]
 
-def get_category(forum_section):
+def get_category(forum_section, title="", content=""):
+    # Content-based category detection takes priority
+    combined = (title + " " + content).lower()
+
+    # CTF / competition writeups
+    if re.search(r'\bctf\b|n1ctf|writeup|\bwp\b|题解|解题', combined):
+        return '安全分析'
+
+    # Automation / scripting tools (NOT reverse engineering)
+    if re.search(r'autoxjs|autojs|抢票|自动化工具|autojs', combined):
+        return '编程开发'
+
+    # Reverse engineering, unpacking, cracking (most articles belong here)
+    if re.search(r'脱壳|dump.*so|加固|逆向|外挂|外g|注入|hook|虚表|算法逆向|\bso\b.*隐藏|maps.*扫描|破解|壳', combined):
+        return '逆向工程'
+
+    # Kernel / driver development (more specific)
+    if re.search(r'内核模块|kpm|内核编译|驱动开发|内核hook|boot[\s]*img|bootimg|内核符号|内核源码|编译.*内核', combined):
+        return '软件调试'
+
+    # Mobile security
+    if re.search(r'android|安卓|\bios\b|移动安全|apk', combined):
+        return '移动安全'
+
+    # Fall back to forum section
     for key, cat in FORUM_CATEGORIES.items():
         if key in forum_section:
             return cat
@@ -225,7 +283,7 @@ def get_category(forum_section):
     if '编程' in forum_section:
         return '编程开发'
     if '原创' in forum_section:
-        return '原创工具'
+        return '逆向工程'
     return '技术分享'
 
 def sanitize_filename(tid, title):
@@ -237,6 +295,8 @@ def sanitize_filename(tid, title):
 
 def scrape_all():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    BLOG_POSTS_DIR = Path("source/_posts")
+    BLOG_POSTS_DIR.mkdir(parents=True, exist_ok=True)
 
     for i, url in enumerate(URLS):
         tid = extract_thread_id(url)
@@ -253,7 +313,7 @@ def scrape_all():
         forum_section = extract_forum_section(text)
         content = extract_post_content(text)
         tags = generate_tags(title, forum_section, content)
-        category = get_category(forum_section)
+        category = get_category(forum_section, title, content)
 
         print(f"  Title: {title[:80]}")
         print(f"  Date: {date}")
@@ -280,9 +340,15 @@ description: "{desc}"
 """
 
         filename = f"52pojie-{sanitize_filename(tid, title)}"
-        filepath = OUTPUT_DIR / filename
 
+        # Save to D:/AI/Article
+        filepath = OUTPUT_DIR / filename
         with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(md)
+
+        # Save to blog source/_posts
+        blog_filepath = BLOG_POSTS_DIR / filename
+        with open(blog_filepath, 'w', encoding='utf-8') as f:
             f.write(md)
 
         print(f"  Saved: {filename}")

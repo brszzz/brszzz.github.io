@@ -79,6 +79,12 @@ pagination_dir: page
 # Extensions
 theme: butterfly
 
+# Search
+search:
+  path: search.xml
+  field: post
+  content: true
+
 # Deployment
 deploy:
   type: git

@@ -66,7 +66,7 @@ post_meta:
 footer:
   owner:
     since: 2026
-    powered: true
+    powered: false
     copyright: true
 
 # Sidebar
@@ -86,7 +86,7 @@ aside:
       link: https://github.com/brszzz
   card_announcement:
     enable: true
-    content: 'Welcome to my blog!'
+    content: 'BLACK★ROCK SHOOTER<br>qq:2132152966'
   card_categories:
     enable: true
     limit: 8
@@ -124,9 +124,18 @@ utterances:
   light_theme: github-light
   dark_theme: dark-blue
 
+# Default display mode (dark/light)
+display_mode: dark
+
 # Search
-local_search:
-  enable: false
+search:
+  use: local_search
+  placeholder: 搜索文章...
+  local_search:
+    preload: false
+    top_n_per_article: 1
+    unescape: false
+    CDN:
 
 # Word count
 wordcount:
@@ -151,5 +160,7 @@ post_copyright:
 # Inject dark mode as default
 inject:
   head:
+    - <meta http-equiv="Cache-Control" content="no-cache">
+    - <style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style>
   bottom:
-    - <script>document.documentElement.setAttribute('data-theme','dark');localStorage.setItem('data-theme','dark');</script>
+    - <script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script>
