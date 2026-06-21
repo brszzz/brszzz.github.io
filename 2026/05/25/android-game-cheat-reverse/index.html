@@ -1,0 +1,446 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="记录一次完整的 Android 游戏外挂逆向分析过程，从被误判的&quot;加密&quot;疑点出发，通过 OLLVM 去混淆、TBZ 寄存器分析和 maps 对比，还原基于 shadowhook 框架的注入架构">
+<meta property="og:type" content="article">
+<meta property="og:title" content="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅">
+<meta property="og:url" content="https://brszzz.github.io/2026/05/25/android-game-cheat-reverse/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="记录一次完整的 Android 游戏外挂逆向分析过程，从被误判的&quot;加密&quot;疑点出发，通过 OLLVM 去混淆、TBZ 寄存器分析和 maps 对比，还原基于 shadowhook 框架的注入架构">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2026-05-25T04:00:00.000Z">
+<meta property="article:modified_time" content="2026-06-21T15:49:40.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="Hook">
+<meta property="article:tag" content="OLLVM">
+<meta property="article:tag" content="ARM64">
+<meta property="article:tag" content="Unicorn">
+<meta property="article:tag" content="逆向工程">
+<meta property="article:tag" content="游戏外挂">
+<meta property="article:tag" content="ELF">
+<meta property="article:tag" content="Android">
+<meta property="article:tag" content="shadowhook">
+<meta property="article:tag" content="二进制安全">
+<meta property="article:tag" content="IDA Pro">
+<meta property="article:tag" content="memfd">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "深入解析 23MB 的\"加密\"迷雾：一次 Android 游戏外挂的完整逆向之旅",
+  "url": "https://brszzz.github.io/2026/05/25/android-game-cheat-reverse/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2026-05-25T04:00:00.000Z",
+  "dateModified": "2026-06-21T15:49:40.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2026/05/25/android-game-cheat-reverse/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '深入解析 23MB 的"加密"迷雾：一次 Android 游戏外挂的完整逆向之旅',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-05-25T04:00:00.000Z" title="发表于 2026-05-25 12:00:00">2026-05-25</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-21T15:49:40.000Z" title="更新于 2026-06-21 23:49:40">2026-06-21</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">14k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>51 mins.分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>当你面对一个被标记为”[目标游戏追踪]”的 23MB Android 原生库，分析工具告诉你它包含 49,000 多个函数、82,000 条字符串、并且文件”经过了加密”，你会从哪里入手？</p>
+<p>本文记录了一次完整的逆向分析过程：从一个被认为”字串有加密”的疑点出发，先后经历了 IDA Pro 崩溃、Python 编码问题、误判 CJK 文本的陷阱，最终识别出一个基于 shadowhook 框架的 Android 游戏外挂，并还原了其完整的注入架构和保护方案。</p>
+<hr>
+<h2 id="第一章：最初的困惑"><a href="#第一章：最初的困惑" class="headerlink" title="第一章：最初的困惑"></a>第一章：最初的困惑</h2><h3 id="1-1-文件的表象"><a href="#1-1-文件的表象" class="headerlink" title="1.1 文件的表象"></a>1.1 文件的表象</h3><p>文件名为 <code>xxxx-XZZ[目标游戏追踪].sh</code>，后缀 <code>.sh</code> 暗示它是一个 shell 脚本。但 <code>file</code> 命令和二进制分析很快指出真相：这是一个 <strong>ARM64 ELF 共享库</strong>（.so），大小 23MB，SHA256 为 <code>[sha256:redacted]</code>。</p>
+<p>初步扫描显示：</p>
+<ul>
+<li>函数总数：49,375（仅 578 个有名称）</li>
+<li>字符串：82,069 条</li>
+<li>主要段：<code>.text</code>（5.8 MB）、<code>.rodata</code>（12.3 MB）、<code>.data</code>（1.3 MB）</li>
+</ul>
+<p>最引人注目的是 12MB 的 <code>.rodata</code> 段中，有一块区域（0x39B660-0x39C000+）包含大量看似加密的字节序列——以 <code>0x06</code> 分隔的字符串，重复出现的模式，以及高熵数据块。这是加密了吗？</p>
+<h3 id="1-2-“加密字符串”的假阳性"><a href="#1-2-“加密字符串”的假阳性" class="headerlink" title="1.2 “加密字符串”的假阳性"></a>1.2 “加密字符串”的假阳性</h3><p>最初的假设是字符串加密。但经过系统性的排查后发现：</p>
+<ol>
+<li><strong>没有任何编码的中文文本存在</strong>：UTF-8 CJK、GB2312、UTF-16LE 均未找到真实匹配</li>
+<li><strong>XOR 穷举无果</strong>：对目标游戏名称进行 0x00-0xFF 全部单字节 XOR 解码，一无所获</li>
+<li><strong>0x39B660 区域的真相</strong>：那不是加密表，而是 <strong>OpenType&#x2F;TrueType 字体数据</strong>——特性标签（<code>ordn</code>、<code>pnum</code>、<code>sinf</code>、<code>subs</code>、<code>sups</code>、<code>tnum</code>、<code>vert</code>、<code>vrt2</code>）、字形度量、字符映射表</li>
+</ol>
+<p>关键转折：<strong>这个二进制没有字符串加密</strong>。所有字符串都是明文英文。<code>&quot;shadowhook: %s(%p, %p, %u) OK.&quot;</code> 这样的字符串直接存在于 <code>.rodata</code> 中。</p>
+<h3 id="1-3-真正的身份"><a href="#1-3-真正的身份" class="headerlink" title="1.3 真正的身份"></a>1.3 真正的身份</h3><p>字符串表中反复出现的 <code>&quot;shadowhook&quot;</code> 揭示了真相：这个二进制基于 <strong>shadowhook v1.88 WIP</strong>，一个开源的 Android 内联 Hook 框架。</p>
+<p>这意味着：我们面对的不是一个普通的加密二进制，而是一个 <strong>基于成熟框架的游戏修改工具</strong>，被 OLLVM 控制流混淆保护。</p>
+<hr>
+<h2 id="第二章：三座大山——巨型混淆函数"><a href="#第二章：三座大山——巨型混淆函数" class="headerlink" title="第二章：三座大山——巨型混淆函数"></a>第二章：三座大山——巨型混淆函数</h2><p>静态分析发现三个异常巨大的函数：</p>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th align="center">地址</th>
+<th align="center">大小</th>
+<th align="center">指令数</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>sub_113340C</code></td>
+<td align="center">0x113340C</td>
+<td align="center"><strong>2.79 MB</strong></td>
+<td align="center">714,943</td>
+</tr>
+<tr>
+<td><code>sub_13ED708</code></td>
+<td align="center">0x13ED708</td>
+<td align="center"><strong>238 KB</strong></td>
+<td align="center">60,842</td>
+</tr>
+<tr>
+<td><code>sub_1428DB0</code></td>
+<td align="center">0x1428DB0</td>
+<td align="center"><strong>1.65 MB</strong></td>
+<td align="center">421,709</td>
+</tr>
+</tbody></table>
+<p>这三者合计 4.68 MB，占整个 <code>.text</code> 段的 80%。它们正是 OLLVM 混淆的目标。</p>
+<h3 id="2-1-IDA-Pro-的崩溃"><a href="#2-1-IDA-Pro-的崩溃" class="headerlink" title="2.1 IDA Pro 的崩溃"></a>2.1 IDA Pro 的崩溃</h3><p>尝试用 IDA Pro MCP 反编译 <code>sub_13ED708</code>（最小的 238KB 函数）时，IDA Pro 的 HTTP MCP 服务器直接超时崩溃。239KB 的函数对于反编译器来说是致命的——传统的反编译算法在遇到控制流平坦化时会产生指数级的路径爆炸。</p>
+<h3 id="2-2-Unicorn-模拟的尝试"><a href="#2-2-Unicorn-模拟的尝试" class="headerlink" title="2.2 Unicorn 模拟的尝试"></a>2.2 Unicorn 模拟的尝试</h3><p>为了绕过 IDA 的限制，尝试使用 Unicorn Engine 对函数进行动态模拟执行。但问题在于：</p>
+<ul>
+<li>函数起始有 <strong>10,000+ 条线性指令</strong>（prologue），没有任何分支</li>
+<li>这些指令在初始化栈帧、加载常量、建立跳转表</li>
+<li>模拟跑完 10,000 条指令后仍然处于 prologue 阶段，没有进入 dispatcher</li>
+<li>寄存器默认值全为 0，导致所有条件分支行为异常</li>
+</ul>
+<p>结论：直接模拟 2.8MB 的函数需要正确的参数环境和更复杂的设置，这条路需要更多工程投入。</p>
+<h3 id="2-3-静态分析的突破口"><a href="#2-3-静态分析的突破口" class="headerlink" title="2.3 静态分析的突破口"></a>2.3 静态分析的突破口</h3><p>回到静态分析，扫描全部 714,943 条指令后，发现了一个惊人的统计结果：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">TBZ:  44,789  (6.26%)</span><br><span class="line">TBNZ:  3,172  (0.44%)</span><br><span class="line">BLR:  29,647  (4.15%)</span><br><span class="line">BR:      247  (0.03%)</span><br><span class="line">B:         0  (0.00%)  ← 一个都没有！</span><br><span class="line">B.cond:    0  (0.00%)  ← 一个都没有！</span><br></pre></td></tr></table></figure>
+
+<p><strong>整个函数没有一条 <code>B</code>（无条件分支）或 <code>B.cond</code>（条件分支）指令。</strong> 这在 ARM64 代码中极其异常——正常的代码不可能没有无条件跳转。</p>
+<p>取而代之的是 47,961 条 <code>TBZ/TBNZ</code>（位测试并分支）指令。这就是 OLLVM 的控制流平坦化技巧：把所有的分支都转换成位测试指令。</p>
+<hr>
+<h2 id="第三章：TBZ-之谜——一种特殊的-OLLVM-变体"><a href="#第三章：TBZ-之谜——一种特殊的-OLLVM-变体" class="headerlink" title="第三章：TBZ 之谜——一种特殊的 OLLVM 变体"></a>第三章：TBZ 之谜——一种特殊的 OLLVM 变体</h2><h3 id="3-1-寄存器分析法破解混淆"><a href="#3-1-寄存器分析法破解混淆" class="headerlink" title="3.1 寄存器分析法破解混淆"></a>3.1 寄存器分析法破解混淆</h3><p>对 47,961 条 TBZ&#x2F;TBNZ 指令按寄存器统计：</p>
+<table>
+<thead>
+<tr>
+<th align="center">寄存器</th>
+<th align="center">出现次数</th>
+<th>解读</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="center">X31 (XZR)</td>
+<td align="center">31,185</td>
+<td><strong>伪装的非条件跳转</strong></td>
+</tr>
+<tr>
+<td align="center">X8</td>
+<td align="center">8,255</td>
+<td><strong>真正的状态寄存器</strong></td>
+</tr>
+<tr>
+<td align="center">X9</td>
+<td align="center">2,336</td>
+<td>辅助状态</td>
+</tr>
+<tr>
+<td align="center">X10-X16</td>
+<td align="center">~4,000</td>
+<td>其他用途</td>
+</tr>
+</tbody></table>
+<p><strong>XZR（零寄存器）的巧妙滥用</strong>：ARM64 中，寄存器 31 在非加载&#x2F;存储指令中代表 XZR——一个恒为 0 的只读寄存器。<code>TBZ XZR, #bit, target</code> 永远成立（因为 0 的任何位都是 0），因此这条指令等价于 <code>B target</code>（无条件跳转）。</p>
+<p>同理，<code>TBNZ XZR, #bit, target</code> 永远不成立，等价于 NOP。</p>
+<p>这就是为什么函数里没有 <code>B</code> 指令——它们全部被替换成了 <code>TBZ XZR, #bit, target</code>！</p>
+<h3 id="3-2-去混淆：42-502-行补丁"><a href="#3-2-去混淆：42-502-行补丁" class="headerlink" title="3.2 去混淆：42,502 行补丁"></a>3.2 去混淆：42,502 行补丁</h3><p>基于这个发现，编写了一个自动化修补脚本，将：</p>
+<ul>
+<li><code>TBZ XZR, #bit, target</code> → <code>B target</code></li>
+<li><code>TBNZ XZR, #bit, target</code> → <code>NOP</code></li>
+</ul>
+<p>三个函数共修补了 <strong>42,502 条指令</strong>（31,185 + 14 + 11,303）。修补后的二进制加载到 IDA 中，CFG 复杂度降低了约 65%。</p>
+<p>剩余的 X8 位测试（8,255 + 215 + 4,558 &#x3D; 12,828 条）则是真正的状态分派逻辑，需要进一步动态分析。</p>
+<hr>
+<h2 id="第四章：maps-对比——注入架构的完整还原"><a href="#第四章：maps-对比——注入架构的完整还原" class="headerlink" title="第四章：maps 对比——注入架构的完整还原"></a>第四章：maps 对比——注入架构的完整还原</h2><p>在分析的过程中，得到了两份关键证据：游戏进程在注入前后 <code>/proc/pid/maps</code> 的导出文件。通过逐行对比，还原了整个注入机制。</p>
+<h3 id="4-1-memfd-注入——核心发现"><a href="#4-1-memfd-注入——核心发现" class="headerlink" title="4.1 memfd 注入——核心发现"></a>4.1 memfd 注入——核心发现</h3><p>对比 before.txt 和 after.txt 后发现，注入后新增了 120 行映射记录。其中最关键的是一组以 <code>/memfd:jit-cache (deleted)</code> 命名的内存段：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">[base_addr]-[base_addr+21.8MB] r-xp 21.8 MB  /memfd:jit-cache (deleted)</span><br><span class="line">[base_addr+21.8MB]-[base_addr+21.9MB] r--p 32 KB    /memfd:jit-cache (deleted)</span><br><span class="line">[base_addr+21.9MB]-[base_addr+23.1MB] rw-p 1.3 MB   /memfd:jit-cache (deleted)</span><br></pre></td></tr></table></figure>
+
+<p>计算这组映射的总大小：<strong>24,211,456 字节</strong>。</p>
+<p>而原始文件的大小是：<strong>24,203,672 字节</strong>。</p>
+<p>两者相差仅 7.6 KB——这个差异完美地解释了页对齐和 ELF 段间填充。</p>
+<p><strong>结论确凿：注入器将整个 23MB 的 ELF 文件完整复制到了一个 memfd（匿名内存文件系统中），然后在游戏进程中 dlopen 加载了这个内存中的副本。</strong></p>
+<h3 id="4-2-memfd-伪装"><a href="#4-2-memfd-伪装" class="headerlink" title="4.2 memfd 伪装"></a>4.2 memfd 伪装</h3><p><code>jit-cache</code> 这个名称不是随意起的。Android 的 ART 运行时使用 <code>/memfd:jit-cache</code> 作为 JIT 编译缓存的名字。把外挂代码映射命名为 <code>jit-cache</code> 是一种精心的伪装——在 <code>/proc/pid/maps</code> 中查看时，它会混入 ART 的正常 JIT 页面中，不会引起怀疑。</p>
+<h3 id="4-3-Shadowhook-的物证"><a href="#4-3-Shadowhook-的物证" class="headerlink" title="4.3 Shadowhook 的物证"></a>4.3 Shadowhook 的物证</h3><p>maps 中还出现了决定性的证据：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">[shadowhook_addr] rwxp  [anon:shadowhook-enter]</span><br><span class="line">[bss_addr] rwxp  [anon:.bss]</span><br></pre></td></tr></table></figure>
+
+<p><code>[anon:shadowhook-enter]</code> 是 shadowhook 的内联 Hook 入口跳板页。<code>rwxp</code>（可读、可写、可执行、私有）权限是 shadowhook 的典型特征——它需要在运行时生成跳转代码，所以需要同时拥有写和执行权限。</p>
+<h3 id="4-4-被-Hook-的游戏"><a href="#4-4-被-Hook-的游戏" class="headerlink" title="4.4 被 Hook 的游戏"></a>4.4 被 Hook 的游戏</h3><p>目标游戏是 <code>com.[redacted]</code>（<code>[目标游戏]</code>），基于 Unreal Engine 4（<code>libUE4.so</code>）。关键发现：libUE4.so 的一段代码段（r-xp）在注入后被拆分，出现了新的 rw-p 页面——这正是 shadowhook 修改代码页权限、写入 Hook 跳板后的结果。</p>
+<p>同时，maps 中出现了 4 组线程栈（<code>stack_and_tls:[XXXX-XXXX]</code>），对应外挂的 4 个工作线程：主循环、自瞄计算、ESP 渲染、菜单交互。</p>
+<hr>
+<h2 id="第五章：完整的外挂画像"><a href="#第五章：完整的外挂画像" class="headerlink" title="第五章：完整的外挂画像"></a>第五章：完整的外挂画像</h2><h3 id="5-1-注入流程"><a href="#5-1-注入流程" class="headerlink" title="5.1 注入流程"></a>5.1 注入流程</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">外部加载器（可能存在独立的注入工具）</span><br><span class="line">  └→ ptrace 附加到游戏进程</span><br><span class="line">     └→ 远程调用 dlopen 加载本 .so</span><br><span class="line">        └→ __libc_init → init_main_obfuscated</span><br><span class="line">           ├→ [检测运行环境]</span><br><span class="line">           │</span><br><span class="line">           ├→ 注入器路径（首次加载）：</span><br><span class="line">           │  → memfd_create(&quot;jit-cache&quot;)</span><br><span class="line">           │  → 读取自身 ELF 到 memfd</span><br><span class="line">           │  → 在游戏进程内 dlopen(memfd)</span><br><span class="line">           │</span><br><span class="line">           └→ 外挂路径（游戏内加载）：</span><br><span class="line">              → shadowhook 初始化</span><br><span class="line">              → Hook eglSwapBuffers</span><br><span class="line">              → 创建 4 线程（主循环/自瞄/ESP/菜单）</span><br><span class="line">              → Hook libUE4.so 函数</span><br><span class="line">              → 分配 GPU 内存（kgsl-3d0）</span><br><span class="line">              → ESP 覆盖绘制 + 自瞄计算循环</span><br></pre></td></tr></table></figure>
+
+<h3 id="5-2-自我保护特性"><a href="#5-2-自我保护特性" class="headerlink" title="5.2 自我保护特性"></a>5.2 自我保护特性</h3><p>这个外挂使用了多层保护：</p>
+<ol>
+<li><strong>无静态导入</strong>：所有系统函数在运行时通过 <code>custom_dlsym</code>（DJB 哈希 + 布隆过滤器）解析</li>
+<li><strong>OLLVM 控制流平坦化</strong>：三个巨型函数使用 TBZ 位测试混淆</li>
+<li><strong>Linker Hook</strong>：<code>hook_android_linker</code> 拦截所有动态库加载行为</li>
+<li><strong>运行时符号解析</strong>：通过 <code>.gnu_debugdata</code> 从其他加载库中提取符号</li>
+<li><strong>memfd 加载</strong>：不在磁盘留下 .so 文件痕迹</li>
+<li><strong>进程伪装</strong>：使用 <code>jit-cache</code> 名称混入 ART JIT 缓存</li>
+</ol>
+<h3 id="5-3-能力图谱"><a href="#5-3-能力图谱" class="headerlink" title="5.3 能力图谱"></a>5.3 能力图谱</h3><table>
+<thead>
+<tr>
+<th>能力</th>
+<th>技术实现</th>
+<th>证据</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ESP 透视</td>
+<td>Hook <code>eglSwapBuffers</code> + OpenGL ES 渲染</td>
+<td>egl&#x2F;gl 函数导入、OpenType 字体数据（文字渲染）</td>
+</tr>
+<tr>
+<td>自瞄&#x2F;辅助瞄准</td>
+<td>三角函数角度计算</td>
+<td><code>atan2f</code>、<code>sinf</code>、<code>cosf</code>、<code>sincosf</code>、<code>powf</code></td>
+</tr>
+<tr>
+<td>菜单系统</td>
+<td>拦截 Android 输入事件</td>
+<td><code>AInputQueue_*</code>、<code>AMotionEvent_*</code> 导入</td>
+</tr>
+<tr>
+<td>配置下发</td>
+<td>Socket 网络通信</td>
+<td><code>socket</code>、<code>connect</code>、<code>sendto</code>、<code>recvfrom</code></td>
+</tr>
+<tr>
+<td>内存扫描</td>
+<td>遍历进程内存</td>
+<td><code>mprotect</code>、<code>mmap</code>、<code>dl_iterate_phdr</code></td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="第六章：经验教训与方法论"><a href="#第六章：经验教训与方法论" class="headerlink" title="第六章：经验教训与方法论"></a>第六章：经验教训与方法论</h2><h3 id="6-1-“加密”的迷思"><a href="#6-1-“加密”的迷思" class="headerlink" title="6.1 “加密”的迷思"></a>6.1 “加密”的迷思</h3><p>二进制逆向中最常见的误判就是”看到看不懂的数据 &#x3D; 加密”。在这个案例中：</p>
+<ul>
+<li>字体数据 → 误判为加密字符串表</li>
+<li>高熵着色器二进制 → 误判为加密载荷</li>
+<li>字形分类表 → 误判为替换密码</li>
+</ul>
+<p>经验：先排除已知格式（字体、图像、压缩数据），再考虑加密。</p>
+<h3 id="6-2-OLLVM-逆向的实用方法"><a href="#6-2-OLLVM-逆向的实用方法" class="headerlink" title="6.2 OLLVM 逆向的实用方法"></a>6.2 OLLVM 逆向的实用方法</h3><p>对于 OLLVM 控制流平坦化，本文的方法论是：</p>
+<ol>
+<li><strong>统计法</strong>：扫描所有指令，寻找异常分布（0 条 B 指令是明确的信号）</li>
+<li><strong>寄存器分析法</strong>：通过 TBZ 使用的寄存器区分”假分支”（XZR）和”真状态”（X8）</li>
+<li><strong>修补法</strong>：自动替换回归无害指令（TBZ XZR → B），降低复杂度</li>
+<li><strong>maps 对比法</strong>：利用 <code>/proc/pid/maps</code> 差异定位注入代码</li>
+</ol>
+<h3 id="6-3-工具链"><a href="#6-3-工具链" class="headerlink" title="6.3 工具链"></a>6.3 工具链</h3><p>使用的工具和技术：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>工具</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>静态分析</td>
+<td>Python + struct, pyelftools</td>
+</tr>
+<tr>
+<td>动态模拟</td>
+<td>Unicorn Engine (ARM64)</td>
+</tr>
+<tr>
+<td>反汇编分析</td>
+<td>自定义 ARM64 解码器</td>
+</tr>
+<tr>
+<td>内存分析</td>
+<td>&#x2F;proc&#x2F;pid&#x2F;maps diff</td>
+</tr>
+<tr>
+<td>修补</td>
+<td>字节码级别自动化 patch</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="结语"><a href="#结语" class="headerlink" title="结语"></a>结语</h2><p>一个被认为”字符串已加密”的 23MB 二进制文件，最终揭示了它作为 Android 游戏外挂的真实身份。它不使用任何字符串加密，而是通过 OLLVM 控制流平坦化、运行时符号解析、memfd 匿名加载等技术来实现自我保护。</p>
+<p>这个案例很好地展示了逆向工程的核心方法：<strong>不预设结论，让证据说话</strong>。从”有加密”到”没有加密”，从”被加壳”到”OLLVM 混淆”，从”独立文件”到”注入器+动态库合一体”，每一步的认知提升都来自于对证据的系统性排查。</p>
+<hr>
+<p><em>分析日期：2026年5月7日</em><br><em>文件：<code>[样本名称].sh</code>（SHA256: [sha256:redacted]）</em><br><em>目标游戏：<code>com.[redacted]</code> ([目标游戏]&#x2F;Unreal Engine 4)</em></p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2026/05/25/android-game-cheat-reverse/">https://brszzz.github.io/2026/05/25/android-game-cheat-reverse/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Hook/">Hook</a><a class="post-meta__tags" href="/tags/OLLVM/">OLLVM</a><a class="post-meta__tags" href="/tags/ARM64/">ARM64</a><a class="post-meta__tags" href="/tags/Unicorn/">Unicorn</a><a class="post-meta__tags" href="/tags/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a><a class="post-meta__tags" href="/tags/%E6%B8%B8%E6%88%8F%E5%A4%96%E6%8C%82/">游戏外挂</a><a class="post-meta__tags" href="/tags/ELF/">ELF</a><a class="post-meta__tags" href="/tags/Android/">Android</a><a class="post-meta__tags" href="/tags/shadowhook/">shadowhook</a><a class="post-meta__tags" href="/tags/%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AE%89%E5%85%A8/">二进制安全</a><a class="post-meta__tags" href="/tags/IDA-Pro/">IDA Pro</a><a class="post-meta__tags" href="/tags/memfd/">memfd</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/" title="从规则到偏好——用强化学习做游戏直播AI切片"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">从规则到偏好——用强化学习做游戏直播AI切片</div></div><div class="info-2"><div class="info-item-1">本文记录了一套游戏直播自动切片系统的完整设计与实战过程。系统以三角洲行动FPS直播为场景，通过语音转写+画面OCR+弹幕联合分析自动识别高光时刻，并引入基于成对偏好学习的强化学习模型替代传统硬编码规则，使切片策略随用户标注逐步优化。</div></div></div></a><a class="pagination-related" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">斗鱼直播 AI 分析系统 — 项目文档</div></div><div class="info-2"><div class="info-item-1">斗鱼直播自动录制+AI智能分析系统，通过DeepSeek/Claude大模型进行多维度分析，自动识别直播精彩片段和高光时刻</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-21</div><div class="info-item-2">DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原</div></div><div class="info-2"><div class="info-item-1">本文记录了对一款伪装为 shell 脚本的 ARM64 ELF 外挂文件进行深度逆向分析的完整过程。从初始 OLLVM 控制流平坦化误判出发，通过 PAC 序言检测、字节码协议发现和 12 调度器架构分析，最终揭示其真实面目为一个针对 UE4 移动游戏对象遍历的领域特定虚拟机（DSVM）。文章详述了 Capstone + Unicorn 工具链的工程实践、790 个操作码的语义提取，以及恶意代码检测的全流程。</div></div></div></a><a class="pagination-related" href="/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/" title="AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-04-29</div><div class="info-item-2">AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本</div></div><div class="info-2"><div class="info-item-1">## AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本  ### 1. 引言  本文记录了一次完整的安卓 ELF（.so）外挂样本逆向分析过程。样本是一个面向某 UE4 射击游戏的游戏作弊模块，基于 Unreal Engine 4 引擎开发。 传统逆向工程依赖人工阅读反汇编代码、逐条追踪指令流，分析周期通常以天甚至周计。本文展示如何利用 **AI 辅助逆向** 工作</div></div></div></a><a class="pagination-related" href="/2024/11/01/52pojie-1977664-KernelPatchModule%E5%BC%80%E5%8F%91%E5%AD%A6%E4%B9%A0-%E7%BC%96%E8%AF%91kpm%E5%A6%82%E4%BD%95%E8%BF%9B%E8%A1%8C%E5%86%85%E6%A0%B8hook/" title="KernelPatchModule开发学习-编译kpm、如何进行内核hook"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-11-01</div><div class="info-item-2">KernelPatchModule开发学习-编译kpm、如何进行内核hook</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  随着安卓逆向研究已经开始进入内核时代，现在内核相关的开发软件和资料也是越来越多。最近发现apatch的kpm挺好用的，不依赖内核源码，编译也很方便，还有现成的几种内核hook方式。但是在学习的过程中发现目前相关资料还是比较少，于是想用文章记录一下自己的学习过程。  **0x1 ****简介、****环境**  什么是KernelPatchModule？  官网的简</div></div></div></a><a class="pagination-related" href="/2024/12/13/52pojie-1991042-%E5%8D%95%E7%8B%AC%E7%BC%96%E8%AF%91%E5%AE%89%E5%8D%93%E5%86%85%E6%A0%B8%E6%96%AD%E7%82%B9%E6%A8%A1%E5%9D%97rwProcMem33%E7%9A%84hwBreakPointProcMoudle/" title="单独编译安卓内核断点模块(rwProcMem33的hwBreakPointProcMoudle)"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-12-13</div><div class="info-item-2">单独编译安卓内核断点模块(rwProcMem33的hwBreakPointProcMoudle)</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  前段时间在研究安卓的硬件断点实现和原理，本来是想尝试移植到aptach的kpm，但是尝试后发现需要补的结构太多了，有的结构不补只有前向声明的话好像也有问题，比如说用register_user_hw_breakpoint注册的断点后用户层会直接卡死，内核层正常运行。结果补来补去最后发现还不如直接用内核源码去编译ko，遂决定先用着原版的那个内核断点模块。这篇文章记录一下编译的</div></div></div></a><a class="pagination-related" href="/2026/05/25/douyu-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/" title="斗鱼直播录制与分析系统 — 项目技术文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">斗鱼直播录制与分析系统 — 项目技术文档</div></div><div class="info-2"><div class="info-item-1">完整的斗鱼直播录制与AI分析系统技术文档，涵盖弹幕协议逆向、视频流签名、Whisper语音转写、AI高光识别等核心技术实现</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1956314-%E4%BD%BF%E7%94%A8ebpf%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93%E6%9F%90elf%E5%8A%A0%E5%AF%86%E6%A0%B7%E6%9C%AC/" title="使用ebpf分析安卓某elf加密样本"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">使用ebpf分析安卓某elf加密样本</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  今天记录一次对某安卓elf文件的加密分析的流程和使用ebpf的思路。  工具设备：  1.mi12 安卓12 内核5.10.136  2.stackplz  **0x1 十六进制dump（xxd）**  首先这个样本有两个文件，一个是elf可执行文件的启动器，一个是不知道什么格式的文件  ![](https://attach.52pojie.cn/forum/20</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER<br>qq:2132152966</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%BC%95%E8%A8%80"><span class="toc-number">1.</span> <span class="toc-text">引言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%AC%AC%E4%B8%80%E7%AB%A0%EF%BC%9A%E6%9C%80%E5%88%9D%E7%9A%84%E5%9B%B0%E6%83%91"><span class="toc-number">2.</span> <span class="toc-text">第一章：最初的困惑</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-1-%E6%96%87%E4%BB%B6%E7%9A%84%E8%A1%A8%E8%B1%A1"><span class="toc-number">2.1.</span> <span class="toc-text">1.1 文件的表象</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-%E2%80%9C%E5%8A%A0%E5%AF%86%E5%AD%97%E7%AC%A6%E4%B8%B2%E2%80%9D%E7%9A%84%E5%81%87%E9%98%B3%E6%80%A7"><span class="toc-number">2.2.</span> <span class="toc-text">1.2 “加密字符串”的假阳性</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-3-%E7%9C%9F%E6%AD%A3%E7%9A%84%E8%BA%AB%E4%BB%BD"><span class="toc-number">2.3.</span> <span class="toc-text">1.3 真正的身份</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%AC%AC%E4%BA%8C%E7%AB%A0%EF%BC%9A%E4%B8%89%E5%BA%A7%E5%A4%A7%E5%B1%B1%E2%80%94%E2%80%94%E5%B7%A8%E5%9E%8B%E6%B7%B7%E6%B7%86%E5%87%BD%E6%95%B0"><span class="toc-number">3.</span> <span class="toc-text">第二章：三座大山——巨型混淆函数</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-IDA-Pro-%E7%9A%84%E5%B4%A9%E6%BA%83"><span class="toc-number">3.1.</span> <span class="toc-text">2.1 IDA Pro 的崩溃</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-2-Unicorn-%E6%A8%A1%E6%8B%9F%E7%9A%84%E5%B0%9D%E8%AF%95"><span class="toc-number">3.2.</span> <span class="toc-text">2.2 Unicorn 模拟的尝试</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-3-%E9%9D%99%E6%80%81%E5%88%86%E6%9E%90%E7%9A%84%E7%AA%81%E7%A0%B4%E5%8F%A3"><span class="toc-number">3.3.</span> <span class="toc-text">2.3 静态分析的突破口</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%AC%AC%E4%B8%89%E7%AB%A0%EF%BC%9ATBZ-%E4%B9%8B%E8%B0%9C%E2%80%94%E2%80%94%E4%B8%80%E7%A7%8D%E7%89%B9%E6%AE%8A%E7%9A%84-OLLVM-%E5%8F%98%E4%BD%93"><span class="toc-number">4.</span> <span class="toc-text">第三章：TBZ 之谜——一种特殊的 OLLVM 变体</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#3-1-%E5%AF%84%E5%AD%98%E5%99%A8%E5%88%86%E6%9E%90%E6%B3%95%E7%A0%B4%E8%A7%A3%E6%B7%B7%E6%B7%86"><span class="toc-number">4.1.</span> <span class="toc-text">3.1 寄存器分析法破解混淆</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-2-%E5%8E%BB%E6%B7%B7%E6%B7%86%EF%BC%9A42-502-%E8%A1%8C%E8%A1%A5%E4%B8%81"><span class="toc-number">4.2.</span> <span class="toc-text">3.2 去混淆：42,502 行补丁</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%AC%AC%E5%9B%9B%E7%AB%A0%EF%BC%9Amaps-%E5%AF%B9%E6%AF%94%E2%80%94%E2%80%94%E6%B3%A8%E5%85%A5%E6%9E%B6%E6%9E%84%E7%9A%84%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F"><span class="toc-number">5.</span> <span class="toc-text">第四章：maps 对比——注入架构的完整还原</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#4-1-memfd-%E6%B3%A8%E5%85%A5%E2%80%94%E2%80%94%E6%A0%B8%E5%BF%83%E5%8F%91%E7%8E%B0"><span class="toc-number">5.1.</span> <span class="toc-text">4.1 memfd 注入——核心发现</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-2-memfd-%E4%BC%AA%E8%A3%85"><span class="toc-number">5.2.</span> <span class="toc-text">4.2 memfd 伪装</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-3-Shadowhook-%E7%9A%84%E7%89%A9%E8%AF%81"><span class="toc-number">5.3.</span> <span class="toc-text">4.3 Shadowhook 的物证</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-4-%E8%A2%AB-Hook-%E7%9A%84%E6%B8%B8%E6%88%8F"><span class="toc-number">5.4.</span> <span class="toc-text">4.4 被 Hook 的游戏</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%AC%AC%E4%BA%94%E7%AB%A0%EF%BC%9A%E5%AE%8C%E6%95%B4%E7%9A%84%E5%A4%96%E6%8C%82%E7%94%BB%E5%83%8F"><span class="toc-number">6.</span> <span class="toc-text">第五章：完整的外挂画像</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#5-1-%E6%B3%A8%E5%85%A5%E6%B5%81%E7%A8%8B"><span class="toc-number">6.1.</span> <span class="toc-text">5.1 注入流程</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-2-%E8%87%AA%E6%88%91%E4%BF%9D%E6%8A%A4%E7%89%B9%E6%80%A7"><span class="toc-number">6.2.</span> <span class="toc-text">5.2 自我保护特性</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-3-%E8%83%BD%E5%8A%9B%E5%9B%BE%E8%B0%B1"><span class="toc-number">6.3.</span> <span class="toc-text">5.3 能力图谱</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%AC%AC%E5%85%AD%E7%AB%A0%EF%BC%9A%E7%BB%8F%E9%AA%8C%E6%95%99%E8%AE%AD%E4%B8%8E%E6%96%B9%E6%B3%95%E8%AE%BA"><span class="toc-number">7.</span> <span class="toc-text">第六章：经验教训与方法论</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#6-1-%E2%80%9C%E5%8A%A0%E5%AF%86%E2%80%9D%E7%9A%84%E8%BF%B7%E6%80%9D"><span class="toc-number">7.1.</span> <span class="toc-text">6.1 “加密”的迷思</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-2-OLLVM-%E9%80%86%E5%90%91%E7%9A%84%E5%AE%9E%E7%94%A8%E6%96%B9%E6%B3%95"><span class="toc-number">7.2.</span> <span class="toc-text">6.2 OLLVM 逆向的实用方法</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-3-%E5%B7%A5%E5%85%B7%E9%93%BE"><span class="toc-number">7.3.</span> <span class="toc-text">6.3 工具链</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%BB%93%E8%AF%AD"><span class="toc-number">8.</span> <span class="toc-text">结语</span></a></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原">DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E9%9B%B6%E6%90%AD%E5%BB%BA%E4%B8%80%E4%B8%AA%E6%8A%80%E6%9C%AF%E5%8D%9A%E5%AE%A2%E2%80%94%E2%80%94Hexo-Butterfly%E4%B8%BB%E9%A2%98%E6%B7%B1%E5%BA%A6%E5%AE%9A%E5%88%B6%E5%AE%9E%E5%BD%95/" title="从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录">从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录</a><time datetime="2026-05-29T14:00:00.000Z" title="发表于 2026-05-29 22:00:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/" title="从规则到偏好——用强化学习做游戏直播AI切片">从规则到偏好——用强化学习做游戏直播AI切片</a><time datetime="2026-05-29T07:30:00.000Z" title="发表于 2026-05-29 15:30:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</a><time datetime="2026-05-25T04:00:00.000Z" title="发表于 2026-05-25 12:00:00">2026-05-25</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档">斗鱼直播 AI 分析系统 — 项目文档</a><time datetime="2026-05-25T02:40:00.000Z" title="发表于 2026-05-25 10:40:00">2026-05-25</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

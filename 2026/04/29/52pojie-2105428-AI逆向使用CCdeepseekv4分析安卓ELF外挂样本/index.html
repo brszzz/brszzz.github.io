@@ -1,0 +1,440 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="## AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本  ### 1. 引言  本文记录了一次完整的安卓 ELF（.so）外挂样本逆向分析过程。样本是一个面向某 UE4 射击游戏的游戏作弊模块，基于 Unreal Engine 4 引擎开发。 传统逆向工程依赖人工阅读反汇编代码、逐条追踪指令流，分析周期通常以天甚至周计。本文展示如何利用 **AI 辅助逆向** 工作">
+<meta property="og:type" content="article">
+<meta property="og:title" content="AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本">
+<meta property="og:url" content="https://brszzz.github.io/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="## AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本  ### 1. 引言  本文记录了一次完整的安卓 ELF（.so）外挂样本逆向分析过程。样本是一个面向某 UE4 射击游戏的游戏作弊模块，基于 Unreal Engine 4 引擎开发。 传统逆向工程依赖人工阅读反汇编代码、逐条追踪指令流，分析周期通常以天甚至周计。本文展示如何利用 **AI 辅助逆向** 工作">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2026-04-29T07:39:00.000Z">
+<meta property="article:modified_time" content="2026-06-21T15:49:40.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="Linux内核">
+<meta property="article:tag" content="C++">
+<meta property="article:tag" content="Hook">
+<meta property="article:tag" content="ARM">
+<meta property="article:tag" content="DEX">
+<meta property="article:tag" content="Python">
+<meta property="article:tag" content="ELF">
+<meta property="article:tag" content="AI分析">
+<meta property="article:tag" content="Claude">
+<meta property="article:tag" content="DeepSeek">
+<meta property="article:tag" content="IDA-Pro">
+<meta property="article:tag" content="MCP">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本",
+  "url": "https://brszzz.github.io/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2026-04-29T07:39:00.000Z",
+  "dateModified": "2026-06-21T15:49:40.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-04-29T07:39:00.000Z" title="发表于 2026-04-29 15:39:00">2026-04-29</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-21T15:49:40.000Z" title="更新于 2026-06-21 23:49:40">2026-06-21</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">24k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>1:26分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h2 id="AI逆向，使用Claude-Code-deepseekv4分析安卓ELF外挂样本"><a href="#AI逆向，使用Claude-Code-deepseekv4分析安卓ELF外挂样本" class="headerlink" title="AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本"></a>AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本</h2><h3 id="1-引言"><a href="#1-引言" class="headerlink" title="1. 引言"></a>1. 引言</h3><p>本文记录了一次完整的安卓 ELF（.so）外挂样本逆向分析过程。样本是一个面向某 UE4 射击游戏的游戏作弊模块，基于 Unreal Engine 4 引擎开发。<br>传统逆向工程依赖人工阅读反汇编代码、逐条追踪指令流，分析周期通常以天甚至周计。本文展示如何利用 <strong>AI 辅助逆向</strong> 工作流——以 Claude Code（搭载 deepseekv4 模型）为核心，结合 IDA Pro MCP 插件实现 IDE 级交互，将分析效率提升到一个新的量级。<br>本次分析的完整文件包括：</p>
+<ul>
+<li><p><code>2026-04-28-182421-this-session-is-being-continued-from-a-previous-c.txt</code> — 完整的 AI 交互会话记录（分析流程的基础）</p>
+</li>
+<li><p><code>sub_27D40_analysis.md</code> — 核心函数 sub_27D40 的深度分析文档（结论参考）</p>
+</li>
+<li><p><code>report.md</code> — 样本整体逆向报告（结论参考）</p>
+</li>
+<li><p><code>decoded_strings.txt</code> &#x2F; <code>decoded_strings_full_v3.txt</code> — 解密后的字符串表</p>
+</li>
+<li><p><code>decrypt_range.py</code> &#x2F; <code>analyze_range.py</code> — 自动化解密脚本</p>
+</li>
+<li><p><code>sub_2F6F8.json</code> &#x2F; <code>sub_2F6F8.txt</code> &#x2F; <code>sub_2F6F8_decompile.txt</code> — 第二解密函数的结构化分析</p>
+</li>
+<li><p><code>sub2F6F8_byte_keys.txt</code> &#x2F; <code>sub2F6F8_xmm_keys.txt</code> &#x2F; <code>sub2F6F8_all_keys.txt</code> &#x2F; <code>sub2F6F8_combined_keys.txt</code> — 解密密钥表</p>
+</li>
+<li><p><code>SDK.txt</code> — 目标游戏的 UE4 SDK 偏移定义</p>
+</li>
+</ul>
+<h3 id="2-使用工具"><a href="#2-使用工具" class="headerlink" title="2. 使用工具"></a>2. 使用工具</h3><h4 id="2-1-Claude-Code-deepseekv4-flash"><a href="#2-1-Claude-Code-deepseekv4-flash" class="headerlink" title="2.1 Claude Code + deepseekv4-flash"></a>2.1 Claude Code + deepseekv4-flash</h4><p><a target="_blank" rel="noopener" href="https://claude.ai/code">Claude Code</a> 是 Anthropic 推出的 AI 编程助手，运行在终端环境中，具备完整的文件系统读写、代码分析和工具调用能力。本次会话运行在 <strong>deepseek-v4-flash</strong> 模型上。<br>Claude Code 的核心能力在此次逆向中发挥了关键作用：</p>
+<ul>
+<li><p><strong>大上下文窗口</strong>：可一次性载入 IDA Pro 导出的反汇编代码（如 <code>sub_2F6F8.txt</code> 达 87KB）、SDK 定义（SDK.txt 达 2.8MB），跨文件关联分析</p>
+</li>
+<li><p><strong>工具链集成</strong>：直接调用 Bash 运行 Python 解密脚本、读取分析结果、编辑文档</p>
+</li>
+<li><p><strong>多轮深度推理</strong>：从”这个函数在做什么”逐步深入到”这个偏移对应 SDK 中的哪个字段”，全程无需人工切换环境</p>
+</li>
+<li><p><strong>会话压缩（Baking）</strong>：长时间分析后自动压缩历史，提炼关键上下文继续推理，确保数小时分析过程中关键发现不丢失</p>
+</li>
+</ul>
+<h4 id="2-2-IDA-Pro-MCP-插件"><a href="#2-2-IDA-Pro-MCP-插件" class="headerlink" title="2.2 IDA Pro MCP 插件"></a>2.2 IDA Pro MCP 插件</h4><p>IDA Pro（Interactive Disassembler Pro）是行业标准的二进制分析工具。MCP（Model Context Protocol）是 Anthropic 提出的 AI 工具集成协议。通过 IDA Pro MCP 插件，Claude Code 可以直接向 IDA 发起查询：</p>
+<ul>
+<li><p><strong>goToDefinition</strong>：跳转到指定地址查看代码</p>
+</li>
+<li><p><strong>findReferences</strong>：查找某个地址的交叉引用（xref）</p>
+</li>
+<li><p><strong>hover</strong>：获取 IDA 对某条指令的类型&#x2F;注释信息</p>
+</li>
+<li><p><strong>decompile</strong>：获取指定函数的伪代码</p>
+</li>
+</ul>
+<p>这意味着 Claude 不再是”阅读你粘贴的文本”，而是像逆向工程师一样<strong>亲自操作 IDA</strong>——查看指令、追踪引用、验证猜想。整个分析过程中 Claude 通过 MCP 调用了 IDA 数十次，涵盖了从起始偏移确认到 SVC 写入上下文追踪的完整分析链。</p>
+<h4 id="2-3-Python-自动化脚本"><a href="#2-3-Python-自动化脚本" class="headerlink" title="2.3 Python 自动化脚本"></a>2.3 Python 自动化脚本</h4><ul>
+<li><p><code>decrypt_range.py</code>：从 IDA 导出的原始加密字节，结合密钥表批量 XOR 解密</p>
+</li>
+<li><p><code>analyze_range.py</code>：利用已知密钥表对加密数据块进行自动评分和暴力破解</p>
+</li>
+</ul>
+<h3 id="3-分析过程"><a href="#3-分析过程" class="headerlink" title="3. 分析过程"></a>3. 分析过程</h3><h4 id="3-1-第一步：从字符串解密入手"><a href="#3-1-第一步：从字符串解密入手" class="headerlink" title="3.1 第一步：从字符串解密入手"></a>3.1 第一步：从字符串解密入手</h4><p>分析的第一步是理解样本的<strong>字符串加密方案</strong>。样本使用单字节 XOR 加密保护所有敏感字符串，通过 ARM NEON SIMD 指令以 16 字节块进行加解密。样本包含两层加密区域，分别在加载时和运行时解密。</p>
+<p><strong>第一阶段解密：sub_2219C（.init_array 自动执行）</strong></p>
+<p>解密函数 <code>sub_2219C</code>（14,276 字节）通过 <code>.init_array</code> 在 .so 加载时自动调用，解密 <code>.data</code> 段 0x47D000-0x49BDF0 范围的数据。使用 60+ 个不同的单字节 XOR 密钥，每个密钥通过 <code>MOVI Vd.16B, #imm</code> 指令编码在函数中。<br>从 <code>decoded_strings.txt</code> 可以看到关键解密结果：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">密钥 0x9B → &quot;[-] Failed to get native window from surface&quot;</span><br><span class="line">密钥 0xDE → &quot;[+] ANativeWindow created succes&quot;</span><br><span class="line">密钥 0xF9 → &quot;ro.build.version&quot;</span><br><span class="line">密钥 0x0C → &quot;[-] Unsupported system version:&quot;</span><br><span class="line">密钥 0x89 → &quot;/system/lib64/li&quot; (libgui.so)</span><br><span class="line">密钥 0x61 → &quot;reate surface con&quot;</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+</blockquote>
+<p><strong>AI 工作流要点</strong>：Claude 通过阅读 IDA 导出的反汇编代码，自动识别 MOVI 加载密钥 → LDR 加载数据 → EOR XOR 解密 → STR 写回的 4 步模式，无需人工逐条分析。</p>
+<p><strong>第二阶段解密：sub_2F6F8（运行时三层混合解密）</strong></p>
+<p>不同于 .init_array 中的自动解密，<code>sub_2F6F8</code> 在运行时通过 <code>thread_game_loop → game_loop_iteration → sub_2D2D8</code> 调用。它使用了<strong>三层混合解密方案</strong>：</p>
+<ul>
+<li><p><strong>字节级 XOR</strong>：1233 次单字节 <code>LDRB + EOR + STRB</code> 操作</p>
+</li>
+<li><p><strong>NEON veorq_s8</strong>：237 次 16 字节块 XOR 操作</p>
+</li>
+<li><p><strong>NEON veor_s8</strong>：78 次 8 字节块 XOR 操作</p>
+</li>
+</ul>
+<p>总共 315 次 NEON 操作，覆盖约 4,296 字节（60% 的区域）。密钥直接编码在 <code>sub_2F6F8</code> 的指令中，解密操作存在控制流逻辑——并非所有字节都在同一路径解密。<br>通过 Python 脚本自动解密，最终恢复 <strong>155 个字符串</strong>，内容涵盖：</p>
+<p>|<br>| 分类<br>| 内容<br> |</p>
+<p>|<br>| 程序包名<br>| <code>com.example.game</code><br> |</p>
+<p>|<br>| 游戏引擎<br>| <code>libUE4.so</code> (Unreal Engine 4)<br> |</p>
+<p>|<br>| Shell 脚本<br>| 完整的反检测 bash 脚本（553 字节）<br> |</p>
+<p>|<br>| 版本检测<br>| <code>uname -r \| sed</code>、<code>dumpsys package \| grep versionName</code><br> |</p>
+<p>|<br>| 进程内存操作<br>| <code>process_vm_writev</code>、<code>/proc/self/maps</code>、<code>/proc/%d/maps</code><br> |</p>
+<p>|<br>| 输入设备<br>| <code>/dev/input/event%d</code><br> |</p>
+<p>|<br>| C++ 符号表<br>| <strong>41 个完整 SurfaceFlinger API 符号</strong><br> |</p>
+<p>|<br>| ImGui<br>| <code>ImGui</code>、<code>AImGui</code>、<code>Show</code>、<code>Hide</code>、<code>Apply</code><br> |</p>
+<p>完整 41 个 SurfaceFlinger 符号覆盖了从创建表面、事务管理到渲染提交的完整管线，包括 <code>SurfaceComposerClient::createSurface</code>（6 个重载）、<code>Transaction::setLayer/show/hide/apply</code>、<code>SurfaceControl::getSurface</code> 等。</p>
+<h4 id="3-2-第二步：架构总览"><a href="#3-2-第二步：架构总览" class="headerlink" title="3.2 第二步：架构总览"></a>3.2 第二步：架构总览</h4><p>通过 Claude Code 对反汇编代码的全局分析，样本采用清晰的模块化架构：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">sub_1A410 (主入口)</span><br><span class="line">  ├── sub_1D4B4 — Android 版本检测 + libgui/libutils 动态加载</span><br><span class="line">  ├── sub_1A820 — FNV-1a 哈希表 + dlsym 函数解析</span><br><span class="line">  ├── sub_22138 — SurfaceFlinger Overlay 渲染线程 (pthread_create)</span><br><span class="line">  └── sub_2778C → sub_27D40 (每帧调用的核心作弊函数)</span><br><span class="line">        └── sub_25CDC — 世界坐标→屏幕坐标矩阵变换</span><br></pre></td></tr></table></figure>
+
+<p>每个模块的用途通过 Claude Code 对 IDA 的交叉引用分析和代码路径追踪得以确认。<br><strong>初始化流程 sub_2D2D8</strong> 揭示了外挂的启动过程：</p>
+<ul>
+<li><p><code>popen(&quot;pidof com.example.game&quot;)</code> → 获取游戏 PID</p>
+</li>
+<li><p><code>ioctl(fd, req, &#123;buf&#125;)</code> → 内核模块查询 libUE4.so 基址</p>
+</li>
+<li><p><code>sub_27A48(&quot;PAN_xxx.ini&quot;)</code> → 读配置文件（功能开关、热键、颜色等）</p>
+</li>
+</ul>
+<h4 id="3-3-第三步：核心函数-sub-27D40-深度分析"><a href="#3-3-第三步：核心函数-sub-27D40-深度分析" class="headerlink" title="3.3 第三步：核心函数 sub_27D40 深度分析"></a>3.3 第三步：核心函数 sub_27D40 深度分析</h4><p><code>sub_27D40</code>（0x27D40）是整个外挂的核心函数，大小 21,912 字节，包含 162 个基本块，圈复杂度高达 106。它集成了 <strong>75 次 IOCTL 内存读取</strong> 和 <strong>34 次 process_vm_writev 内存写入</strong>。<br>以下分析流程严格参考 <code>2026-04-28-182421-this-session-is-being-continued-from-a-previous-c.txt</code> 中的分析步骤。</p>
+<p><strong>3.3.1 起始偏移匹配（分析过程的第一个转折点）</strong></p>
+<p>分析会话记录显示，第一个关键问题是：外挂读取的 <code>UE4_base + 0xDE2E908</code> 在 SDK 中找不到直接匹配。标准 UE4 偏移为 GWorld&#x3D;0xDE5DFF8、DebugCanvas&#x3D;0xDE5E908、GEngine&#x3D;0xDE5AEC0 等，都与 0xDE2E908 存在差异。<br>Claude 没有停留在标准偏移上，而是逐一比对发现 <strong>DebugCanvas&#x3D;0xDE5E908 减去 0x30000 正好等于 0xDE2E908</strong>。确认外挂通过基址修正指向 DebugCanvas——这是一个有意识的反检测设计，意在绕过对 GWorld 等热门全局变量的监控。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">UE4_base + 0xDE2E908 ──[IOCTL #1]──→ Ptr1 (DebugCanvas全局)</span><br><span class="line">  └─ Ptr1 + 0x20 ──[IOCTL #2]──→ Ptr2 (qword_49D6B0, 引擎核心结构)</span><br><span class="line">      ├─ +0x30  → UWorld.PersistentLevel</span><br><span class="line">      ├─ +0x2C0 → qword_49D6C8 → GameCharacter</span><br><span class="line">      ├─ +0x370 → qword_49D7E0 → LocalPlayer</span><br><span class="line">      └─ (Level→ActorCluster→Actors) → qword_49D7C0 = TArray&lt;AActor*&gt;</span><br></pre></td></tr></table></figure>
+
+<p><strong>3.3.2 IOCTL 链追踪</strong></p>
+<p>75 次 IOCTL 调用分为四个阶段：<br><strong>阶段 1（IOCTL #1-21）初始化链</strong>：从 DebugCanvas 出发，通过级联指针读取获取引擎核心结构体。关键路径为 DebugCanvas → Ptr1 → Ptr2 → UWorld &#x2F; GameCharacter &#x2F; LocalPlayer。<br><strong>阶段 2（IOCTL #22-51）主数据读取</strong>：使用阶段 1 存储的指针读取游戏数据字段，包括结构体头部、控制旋转、骨骼网格数据等。<br><strong>阶段 3（IOCTL #52-71）Actor 数组遍历</strong>：遍历 ULevel 中的 Actor 数组，对每个 Actor 进行世界→屏幕投影和骨骼数据读取：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">for i in range(ActorCount):</span><br><span class="line">    actor_ptr = read_ioctl(qword_49D7C0 + i*8)   # IOCTL #52</span><br><span class="line">    world_pos = read_ioctl(actor_ptr + 0x150)      # Actor坐标</span><br><span class="line">    rotation  = read_ioctl(actor_ptr + 0x30)       # Actor旋转</span><br><span class="line">    bone_mtx1 = read_ioctl(actor_ptr + 0x660)      # 骨骼矩阵 #1</span><br><span class="line">    bone_mtx2 = read_ioctl(actor_ptr + 0x690)      # 骨骼矩阵 #2</span><br><span class="line">    bone_mtx3 = read_ioctl(actor_ptr + 0x6C0)      # 骨骼矩阵 #3</span><br><span class="line">    bone_quat = read_ioctl(actor_ptr + 0xAE0)      # 骨骼四元数</span><br><span class="line">    bone_pos  = read_ioctl(actor_ptr + 0xBA0)      # 骨骼位置</span><br><span class="line">    screen_pos = sub_25CDC(world_pos, vp_matrix)   # 世界→屏幕变换</span><br></pre></td></tr></table></figure>
+
+<p>读取的偏移范围（+0x660 ~ +0xC00）远超标准 AActor 大小（~0x290），表明外挂直接读取 Character 子类中 <strong>SkeletalMeshComponent</strong> 的骨骼缓存矩阵，实现了骨骼自瞄（Bone Aimbot）和骨骼透视（Skeleton ESP）。<br><strong>阶段 4（IOCTL #72-75）收尾</strong>：从 GameCharacter 读取 WeaponCoreComp1（+0x20B8）获取当前武器信息。</p>
+<p><strong>3.3.3 sub_25CDC 矩阵变换算法</strong></p>
+<p><code>sub_25CDC</code>（196 字节）使用 NEON SIMD 指令实现了标准 MVP 矩阵变换：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">vec4 clipPos = VP_Matrix * Model_Matrix * vec4(worldPos, 1.0)</span><br><span class="line">screenX = clipPos.x / clipPos.w * viewW/2 + viewW/2</span><br><span class="line">screenY = -clipPos.y / clipPos.w * viewH/2 + viewH/2</span><br></pre></td></tr></table></figure>
+
+<p>Claude Code 通过阅读反汇编中的 NEON 指令（LD4 加载 4x4 矩阵、FMUL&#x2F;FADD 乘加链），直接反向推导出这个 MVP 变换公式。</p>
+<p><strong>3.3.4 34 次内存写入映射（最具突破性的发现）</strong></p>
+<p>分析中最关键的发现来自对 <strong>34 次 SVC 0x10F（process_vm_writev）</strong> 的追踪。从会话记录可以看到，Claude 首先通过 IDA MCP 查找所有 SVC 写入的上下文，然后逐一分析寄存器指向的地址和数据来源。<br><strong>阶段 A（8次）</strong>：引擎核心结构体配置写入，偏移集中在 +0x2EC ~ +0x34C，值来自 <code>dword_47E544</code> 配置常量，用于控制 ESP&#x2F;自瞄的开关和参数（FOV、视距等）。<br><strong>阶段 B 组1（2次）</strong>：写 <code>LocalPlayer + 0x308/0x30C</code> — 玩家本地状态。<br><strong>阶段 B 组2（6次）</strong>：写 <code>GameCharacter + 0x20C0 = WeaponCoreComp2</code><br>会话记录中显示了关键的确认过程：Claude 在 SDK.txt 中搜索偏移 0x20B8 和 0x20C0，发现它们对应 WeaponCoreComp1 和 WeaponCoreComp2（武器槽组件指针）。这意味着外挂<strong>反复覆盖第二武器槽</strong>，实现武器注入——无需拾取即可获得任意武器。<br><strong>阶段 B 组3（18次）</strong>：写 <code>GameCharacter + 0x1C74 ~ 0x1CC0</code> 的英雄技能字段。<br>通过 SDK 字段匹配，主要写入目标包括技能连接数字段（+0x1C74，写入 100）、技能保护状态结构体（+0x1C88）、技能范围检测结构体（+0x1C9C）和技能召回标志（+0x1CAC）。<br>对应的 SDK 结构体定义为：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">struct RepAbilityProtection &#123;     // @ +0x1C88, size 0x14</span><br><span class="line">    bool HasAbilityProtection;   // +0x00</span><br><span class="line">    bool LeaveByAction;          // +0x01</span><br><span class="line">    float ProtectionLeftSeconds; // +0x04</span><br><span class="line">    Vector AbilityPosition;      // +0x08</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">struct RepAbilityRangeTest &#123;      // @ +0x1C9C, size 0x8</span><br><span class="line">    bool IsOutOfValidRange;      // +0x00</span><br><span class="line">    float OutOfRangeTestEndTime; // +0x04</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+</blockquote>
+<p><strong>AI 工作流要点</strong>：会话记录中最能体现 AI 逆向威力的，是这个 SDK 字段匹配过程。Claude Code 一边通过 IDA MCP 追踪 SVC 调用上下文（哪个寄存器指向哪个地址），一边读取 SDK.txt 中的字段定义，通过偏移量匹配完成语义映射。从最初的”PlayerController”误判，到发现 WeaponCoreComp 修正为 GameCharacter，再到完整的技能字段映射——整个过程展示了 AI 的纠错和迭代推理能力。</p>
+<h4 id="3-4-内存读写机制"><a href="#3-4-内存读写机制" class="headerlink" title="3.4 内存读写机制"></a>3.4 内存读写机制</h4><p>分析揭示了一个精心设计的<strong>读写分离架构</strong>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">读 (75x ioctl):</span><br><span class="line">  外挂 .so → ioctl(fd, REQ_READ, &amp;&#123;game_addr&#125;) → 内核模块 →</span><br><span class="line">    ARM SMC/HVC → 读游戏进程物理内存 → 返回数据</span><br><span class="line">  优点: 绕过所有用户态反作弊检测 (不触发 /proc/pid/mem 监控)</span><br><span class="line"></span><br><span class="line">写 (34x process_vm_writev SVC 0x10F):</span><br><span class="line">  外挂 .so → SVC #0x10F(pid, iov, ...) → 直接写入游戏进程虚拟内存</span><br><span class="line">  优点: Linux 原生 syscall，不依赖内核模块，绕过 libc hook</span><br></pre></td></tr></table></figure>
+
+<p><strong>读写分离的设计原因</strong>：读操作频繁（75次&#x2F;帧）且需要任意物理地址访问 → 使用内核模块性能更好；写操作频率低（仅修改关键值）→ 直接 syscall 更简单且减少内核模块的暴露面。即使内核模块被检测移除，写入功能依然可用。</p>
+<h4 id="3-5-反检测机制"><a href="#3-5-反检测机制" class="headerlink" title="3.5 反检测机制"></a>3.5 反检测机制</h4><p>总结外挂使用的多层反检测策略（参考 <code>report.md</code> 中的完整分析）：</p>
+<ul>
+<li><p><strong>DebugCanvas 入口点</strong>：不从标准 GWorld 读取，绕过对热门全局变量的监控</p>
+</li>
+<li><p><strong>内核模块 IOCTL 读内存</strong>：绕过所有用户态反作弊（不触发 <code>/proc/pid/mem</code> 监控）</p>
+</li>
+<li><p><strong>process_vm_writev 写内存</strong>：原始 syscall 绕过 libc 函数 hook</p>
+</li>
+<li><p><strong>XOR 字符串加密</strong>：所有敏感字符串（包名、路径、API 符号）静态加密</p>
+</li>
+<li><p><strong>Shell 脚本设备节点恢复</strong>：检查 <code>/proc/*/fd/*</code> 中已删除的设备节点并重建</p>
+</li>
+<li><p><strong>包名配置化</strong>：游戏包名通过配置文件 <code>PAN_xxx.ini</code> 设定，可切换目标</p>
+</li>
+</ul>
+<p>其中 Shell 脚本的反检测逻辑尤为精巧：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">for file in /proc/*/fd/*; do</span><br><span class="line">  link=$(readlink &quot;$file&quot; 2&gt;/dev/null)</span><br><span class="line">  if [[ &quot;$link&quot; == &quot;/dev/$sbwj (deleted)&quot; ]]; then</span><br><span class="line">    open_file=&quot;$file&quot;; break</span><br><span class="line">  fi</span><br><span class="line">done</span><br><span class="line">if [[ -n &quot;$open_file&quot; ]]; then</span><br><span class="line">  nhjd=$(echo &quot;$open_file&quot;)</span><br><span class="line">  sbid=$(ls -L -l &quot;$nhjd&quot; | sed &#x27;s/\([^,]*\).*/\1/&#x27; | sed &#x27;s/.*root //&#x27;)</span><br><span class="line">  rm -rf &quot;/dev/$sbwj&quot;</span><br><span class="line">  mknod &quot;/dev/$sbwj&quot; c &quot;$sbid&quot; 0</span><br><span class="line">fi</span><br></pre></td></tr></table></figure>
+
+<p>该脚本遍历所有进程的 fd 目录，查找指向已被删除的设备节点的符号链接，获取主设备号后重建 <code>/dev/</code> 下的节点，专门针对”删除 &#x2F;dev&#x2F; 下设备节点使外挂无法访问硬件”的反作弊策略。</p>
+<h4 id="3-6-SurfaceFlinger-Overlay-渲染体系"><a href="#3-6-SurfaceFlinger-Overlay-渲染体系" class="headerlink" title="3.6 SurfaceFlinger Overlay 渲染体系"></a>3.6 SurfaceFlinger Overlay 渲染体系</h4><p>样本通过 Android SurfaceFlinger API 创建硬件加速 ImGui Overlay，而不是使用传统的悬浮窗方案：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">ImGui → SurfaceComposerClient::createSurface → SurfaceControl →</span><br><span class="line">  SurfaceControl::getSurface → ANativeWindow →</span><br><span class="line">    EGL (eglCreateWindowSurface → eglSwapBuffers) →</span><br><span class="line">      OpenGL ES GPU 渲染</span><br></pre></td></tr></table></figure>
+
+<p>41 个完整的 SurfaceFlinger C++ mangled 符号通过两层 XOR 解密恢复，覆盖了从创建表面、设置图层&#x2F;位置&#x2F;矩阵到应用事务的完整渲染管线。这种方案比传统悬浮窗更难被检测，且性能更好（硬件合成）。</p>
+<h3 id="4-结论"><a href="#4-结论" class="headerlink" title="4. 结论"></a>4. 结论</h3><h4 id="4-1-分析成果汇总"><a href="#4-1-分析成果汇总" class="headerlink" title="4.1 分析成果汇总"></a>4.1 分析成果汇总</h4><p>参考 <code>sub_27D40_analysis.md</code> 的完整分析和 <code>report.md</code> 的整体报告，本样本的核心结论如下：</p>
+<p>|<br>| 分析项目<br>| 结果<br> |</p>
+<p>|<br>| 样本类型<br>| ARM64 Android .so 动态库，~4.8MB<br> |</p>
+<p>|<br>| 目标平台<br>| 某 UE4 射击游戏<br> |</p>
+<p>|<br>| 加密体系<br>| 两层 XOR 加密：.init_array 自动解密 + 运行时三层混合解密<br> |</p>
+<p>|<br>| 解密成果<br>| 155 条字符串，含 41 个 SurfaceFlinger API 符号、553 字节 Shell 脚本<br> |</p>
+<p>|<br>| 核心函数<br>| sub_27D40（21,912 字节，162 基本块，圈复杂度 106）<br> |</p>
+<p>|<br>| 内存读取<br>| 75 次 IOCTL&#x2F;帧，通过内核模块 + ARM SMC&#x2F;HVC<br> |</p>
+<p>|<br>| 内存写入<br>| 34 次 SVC 0x10F (process_vm_writev)，直接 syscall<br> |</p>
+<p>|<br>| 写入精确映射<br>| 8 次配置 + 2 次 LocalPlayer + 6 次 WeaponCoreComp2 + 18 次技能字段<br> |</p>
+<p>|<br>| 实现功能<br>| ESP 透视 + 骨骼自瞄 + 武器注入 + 技能效果修改<br> |</p>
+<p>|<br>| 渲染方式<br>| SurfaceFlinger + ImGui Overlay（硬件加速）<br> |</p>
+<p>|<br>| 矩阵变换<br>| sub_25CDC：NEON 优化 MVP 变换（196 字节）<br> |</p>
+<p>|<br>| 模块数量<br>| 6+ 协作模块：版本检测、哈希表 dlsym、渲染线程、初始化、核心、矩阵变换<br> |</p>
+<p>|<br>| 反检测层数<br>| 6 层：间接入口点&#x2F;内核模块读&#x2F;原始 syscall 写&#x2F;XOR 加密&#x2F;设备节点恢复&#x2F;配置化<br> |</p>
+<h4 id="4-2-核心发现：武器注入-技能修改-ESP-自瞄三合一"><a href="#4-2-核心发现：武器注入-技能修改-ESP-自瞄三合一" class="headerlink" title="4.2 核心发现：武器注入 + 技能修改 + ESP&#x2F;自瞄三合一"></a>4.2 核心发现：武器注入 + 技能修改 + ESP&#x2F;自瞄三合一</h4><p>从 <code>sub_27D40_analysis.md</code> 的写入分析可知，<code>sub_27D40</code> <strong>是一个面向 UE4 射击游戏的多功能作弊核心函数，集成了武器注入、技能效果修改、ESP 透视和自瞄功能。</strong><br>写入行为的 SDK 精确映射表明这不仅是 ESP&#x2F;自瞄透视，更是一个武器+技能作弊器：</p>
+<ul>
+<li><p><strong>武器注入</strong>：6 次覆写 <code>WeaponCoreComp2</code>（+0x20C0），将任意武器组件指针注入角色第二武器槽</p>
+</li>
+<li><p><strong>技能修改</strong>：18 次覆写技能相关字段，锁定技能连接数（+0x1C74 写入 100）、覆盖无敌状态（+0x1C88）、无视范围检测（+0x1C9C）、强制技能召回（+0x1CAC）</p>
+</li>
+<li><p><strong>ESP + Aimbot</strong>：Actor 数组遍历 + sub_25CDC MVP 矩阵变换 + 0x660~0xC00 骨骼数据读取，实现方框透视、骨骼透视线、骨骼自瞄</p>
+</li>
+</ul>
+<h4 id="4-3-全局变量映射总结"><a href="#4-3-全局变量映射总结" class="headerlink" title="4.3 全局变量映射总结"></a>4.3 全局变量映射总结</h4><p>经过 SDK 字段匹配修正后的最终映射关系（摘自 <code>sub_27D40_analysis.md</code>）：</p>
+<p>|<br>| 全局变量<br>| 类型<br>| 用途<br> |</p>
+<p>|<br>| <code>qword_49D6A8</code><br>| uint64<br>| UE4 基址<br> |</p>
+<p>|<br>| <code>qword_49D6B0</code><br>| void*<br>| 引擎核心结构体（Ioctl 链根，阶段 A 写目标）<br> |</p>
+<p>|<br>| <code>qword_49D6C8</code><br>| GameCharacter*<br>| 游戏角色对象（含武器槽 WeaponCoreComp 和技能字段）<br> |</p>
+<p>|<br>| <code>qword_49D6D0</code><br>| CameraManager*<br>| 摄像机管理器（VP 矩阵来源）<br> |</p>
+<p>|<br>| <code>qword_49D7C0</code><br>| TArray&lt;AActor*&gt;<br>| Actor 数组（遍历目标）<br> |</p>
+<p>|<br>| <code>qword_49D7E0</code><br>| LocalPlayer*<br>| 本地玩家对象<br> |</p>
+<p>|<br>| <code>dword_49D5F0</code><br>| pid_t<br>| 游戏进程 PID<br> |</p>
+<h4 id="4-4-反检测体系总结"><a href="#4-4-反检测体系总结" class="headerlink" title="4.4 反检测体系总结"></a>4.4 反检测体系总结</h4><p>参考 <code>report.md</code> 的反检测分析，外挂构建了层次化防御体系：</p>
+<ul>
+<li><p><strong>静态层</strong>：XOR 加密所有敏感字符串，密钥编码在指令中而非数据段</p>
+</li>
+<li><p><strong>访问层</strong>：不从标准 UE4 全局变量出发（防模式匹配），通过内核模块读内存（防用户态 hook），通过原始 syscall 写内存（防 libc hook）</p>
+</li>
+<li><p><strong>运行环境层</strong>：Shell 脚本恢复被反作弊删除的设备节点</p>
+</li>
+<li><p><strong>配置层</strong>：目标游戏包名和参数通过外部 ini 文件配置，可灵活切换</p>
+</li>
+</ul>
+<h4 id="4-5-AI-逆向工作流评价"><a href="#4-5-AI-逆向工作流评价" class="headerlink" title="4.5 AI 逆向工作流评价"></a>4.5 AI 逆向工作流评价</h4><p>从完整的会话记录 <code>2026-04-28-182421-this-session-is-being-continued-from-a-previous-c.txt</code> 可以总结 AI 辅助逆向的核心优势和局限：<br><strong>四大优势：</strong></p>
+<ul>
+<li><p><strong>上下文关联能力</strong>：同时处理 IDA 反汇编、SDK 定义、解密脚本、分析文档等多个信息源，跨文件推理</p>
+</li>
+<li><p><strong>模式识别</strong>：快速识别 XOR 解密模式、IOCTL 调用模式、Actor 遍历循环等</p>
+</li>
+<li><p><strong>交互式探索</strong>：通过 MCP 插件直接操作 IDA，像人类分析师一样验证猜想</p>
+</li>
+<li><p><strong>纠错与迭代</strong>：从”PlayerController”误判到”WeaponCoreComp”修正为”GameCharacter”，展示了 AI 的纠错能力</p>
+</li>
+</ul>
+<p><strong>三大局限：</strong></p>
+<ul>
+<li><p>缺乏运行时动态分析能力，对堆内存布局和多态分发无能为力</p>
+</li>
+<li><p>对重度混淆（CFG Flattening、VMP）的防御能力有限</p>
+</li>
+<li><p>需要人工验证关键结论，避免看似合理但错误的推理</p>
+</li>
+</ul>
+<h4 id="4-6-遗留问题"><a href="#4-6-遗留问题" class="headerlink" title="4.6 遗留问题"></a>4.6 遗留问题</h4><p>摘自 <code>sub_27D40_analysis.md</code> 中的未解决问题：</p>
+<p>|<br>| 问题<br>| 原因<br> |</p>
+<p>|<br>| Ptr2 具体指向什么结构体？<br>| 需要匹配版本的游戏符号表<br> |</p>
+<p>|<br>| Actor +0x150 的具体语义？<br>| SDK 对应 NetTag(int)，可能被子类覆写<br> |</p>
+<p>|<br>| 骨骼数据精确格式？<br>| 无运行时数据，难以确认 FTransform 精确布局<br> |</p>
+<p>|<br>| 自瞄算法细节？<br>| 骨骼读取后的瞄准逻辑在 sub_27D40 后半段未完全追踪<br> |</p>
+<h3 id="5-作者碎碎念"><a href="#5-作者碎碎念" class="headerlink" title="5.作者碎碎念"></a>5.作者碎碎念</h3><p>这篇文章主要是尝试AI在游戏安全逆向方向的一些探索，在基础的AI逆向之上，结合游戏的SDK尝试去自动分析功能和修改点。从结果上来说表现还是比较一般，过程中还是有比较多结构是我自己手动修正的，它并没有能完全理解外挂的逻辑，也有可能是我的prompt有优化空间或者是使用的模型知识不够。</p>
+<p>这次除了用CC+deepseekV4，其实还用了一些其他模型进行尝试。gpt5.3-codex、5.4和本地的qwen3.5 9b&#x2F;35b a3b试了一下，最后效果的话我感觉还是deepseekV4 flash&#x2F;pro的效果最好，pro在SDK和游戏引擎上理解上会比flash强点，但是也差不太多。</p>
+<p>后续的话还有几个想尝试的方向，一个是把之前破解过游戏加密使用AI看看能不能复现一遍，过程中看看有没有卡点。还有就是看看能不能实现AI自动找服务器和客户端的一些可攻击的校验漏洞。</p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/">https://brszzz.github.io/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Linux%E5%86%85%E6%A0%B8/">Linux内核</a><a class="post-meta__tags" href="/tags/C/">C++</a><a class="post-meta__tags" href="/tags/Hook/">Hook</a><a class="post-meta__tags" href="/tags/ARM/">ARM</a><a class="post-meta__tags" href="/tags/DEX/">DEX</a><a class="post-meta__tags" href="/tags/Python/">Python</a><a class="post-meta__tags" href="/tags/ELF/">ELF</a><a class="post-meta__tags" href="/tags/AI%E5%88%86%E6%9E%90/">AI分析</a><a class="post-meta__tags" href="/tags/Claude/">Claude</a><a class="post-meta__tags" href="/tags/DeepSeek/">DeepSeek</a><a class="post-meta__tags" href="/tags/IDA-Pro/">IDA-Pro</a><a class="post-meta__tags" href="/tags/MCP/">MCP</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/05/25/douyu-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/" title="斗鱼直播录制与分析系统 — 项目技术文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">斗鱼直播录制与分析系统 — 项目技术文档</div></div><div class="info-2"><div class="info-item-1">完整的斗鱼直播录制与AI分析系统技术文档，涵盖弹幕协议逆向、视频流签名、Whisper语音转写、AI高光识别等核心技术实现</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1975312-%E8%A7%A3%E5%8C%85%E5%B0%8F%E7%B1%B311%E7%9A%84bootimg%E8%BF%98%E5%8E%9F%E5%86%85%E6%A0%B8%E7%AC%A6%E5%8F%B7%E4%BB%A5%E5%8F%8A%E5%9C%B0%E5%9D%80/" title="解包小米11的boot.img，还原内核符号以及地址"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">解包小米11的boot.img，还原内核符号以及地址</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  因为一些教程过于老旧，为了防止自己以后重复踩坑，故记录一下学习过程中遇到的一些坑和现在有效的方法。  设备：mi 11 venus 内核版本5.4.210  **0x1 解包boot.img**  提取内核什么的就直接跳过，网上有很多资料都是可以直接用的，去官网下包或者有root的dd提取都可以。  首先先大概了解一下安卓内核  比较重要的几个分区如下：  1</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2025/01/01/52pojie-1956314-%E4%BD%BF%E7%94%A8ebpf%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93%E6%9F%90elf%E5%8A%A0%E5%AF%86%E6%A0%B7%E6%9C%AC/" title="使用ebpf分析安卓某elf加密样本"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">使用ebpf分析安卓某elf加密样本</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  今天记录一次对某安卓elf文件的加密分析的流程和使用ebpf的思路。  工具设备：  1.mi12 安卓12 内核5.10.136  2.stackplz  **0x1 十六进制dump（xxd）**  首先这个样本有两个文件，一个是elf可执行文件的启动器，一个是不知道什么格式的文件  ![](https://attach.52pojie.cn/forum/20</div></div></div></a><a class="pagination-related" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">斗鱼直播 AI 分析系统 — 项目文档</div></div><div class="info-2"><div class="info-item-1">斗鱼直播自动录制+AI智能分析系统，通过DeepSeek/Claude大模型进行多维度分析，自动识别直播精彩片段和高光时刻</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1952349-%E5%AE%89%E5%8D%93%E6%9F%90%E6%B3%A8%E5%85%A5%E7%B1%BB%E5%A4%96%E6%8C%82%E8%84%B1%E5%A3%B3%E5%92%8C%E5%8A%9F%E8%83%BD%E5%88%86%E6%9E%90%E4%B8%8B/" title="安卓某注入类外挂脱壳和功能分析—下"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">安卓某注入类外挂脱壳和功能分析—下</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  目前已经定位到动态库了，现在就来看看里面的功能逻辑是咋写的，这个环节的话其实跟reverse感觉关系已经不大了，更多的是需要对UE4引擎的理解。今天花了点时间，结合dump的游戏SDK、libUE4,把这个文件里的一些函数和变量名给还原了出来。  **0x1 找到入口函数**  1.首先是要定位到它的入口函数，一般来说动态库会用__attribute__((const</div></div></div></a><a class="pagination-related" href="/2024/11/01/52pojie-1977664-KernelPatchModule%E5%BC%80%E5%8F%91%E5%AD%A6%E4%B9%A0-%E7%BC%96%E8%AF%91kpm%E5%A6%82%E4%BD%95%E8%BF%9B%E8%A1%8C%E5%86%85%E6%A0%B8hook/" title="KernelPatchModule开发学习-编译kpm、如何进行内核hook"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-11-01</div><div class="info-item-2">KernelPatchModule开发学习-编译kpm、如何进行内核hook</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  随着安卓逆向研究已经开始进入内核时代，现在内核相关的开发软件和资料也是越来越多。最近发现apatch的kpm挺好用的，不依赖内核源码，编译也很方便，还有现成的几种内核hook方式。但是在学习的过程中发现目前相关资料还是比较少，于是想用文章记录一下自己的学习过程。  **0x1 ****简介、****环境**  什么是KernelPatchModule？  官网的简</div></div></div></a><a class="pagination-related" href="/2026/05/25/douyu-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/" title="斗鱼直播录制与分析系统 — 项目技术文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">斗鱼直播录制与分析系统 — 项目技术文档</div></div><div class="info-2"><div class="info-item-1">完整的斗鱼直播录制与AI分析系统技术文档，涵盖弹幕协议逆向、视频流签名、Whisper语音转写、AI高光识别等核心技术实现</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1975312-%E8%A7%A3%E5%8C%85%E5%B0%8F%E7%B1%B311%E7%9A%84bootimg%E8%BF%98%E5%8E%9F%E5%86%85%E6%A0%B8%E7%AC%A6%E5%8F%B7%E4%BB%A5%E5%8F%8A%E5%9C%B0%E5%9D%80/" title="解包小米11的boot.img，还原内核符号以及地址"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">解包小米11的boot.img，还原内核符号以及地址</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  因为一些教程过于老旧，为了防止自己以后重复踩坑，故记录一下学习过程中遇到的一些坑和现在有效的方法。  设备：mi 11 venus 内核版本5.4.210  **0x1 解包boot.img**  提取内核什么的就直接跳过，网上有很多资料都是可以直接用的，去官网下包或者有root的dd提取都可以。  首先先大概了解一下安卓内核  比较重要的几个分区如下：  1</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER<br>qq:2132152966</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#AI%E9%80%86%E5%90%91%EF%BC%8C%E4%BD%BF%E7%94%A8Claude-Code-deepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC"><span class="toc-number">1.</span> <span class="toc-text">AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-%E5%BC%95%E8%A8%80"><span class="toc-number">1.1.</span> <span class="toc-text">1. 引言</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-%E4%BD%BF%E7%94%A8%E5%B7%A5%E5%85%B7"><span class="toc-number">1.2.</span> <span class="toc-text">2. 使用工具</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#2-1-Claude-Code-deepseekv4-flash"><span class="toc-number">1.2.1.</span> <span class="toc-text">2.1 Claude Code + deepseekv4-flash</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2-2-IDA-Pro-MCP-%E6%8F%92%E4%BB%B6"><span class="toc-number">1.2.2.</span> <span class="toc-text">2.2 IDA Pro MCP 插件</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2-3-Python-%E8%87%AA%E5%8A%A8%E5%8C%96%E8%84%9A%E6%9C%AC"><span class="toc-number">1.2.3.</span> <span class="toc-text">2.3 Python 自动化脚本</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-%E5%88%86%E6%9E%90%E8%BF%87%E7%A8%8B"><span class="toc-number">1.3.</span> <span class="toc-text">3. 分析过程</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#3-1-%E7%AC%AC%E4%B8%80%E6%AD%A5%EF%BC%9A%E4%BB%8E%E5%AD%97%E7%AC%A6%E4%B8%B2%E8%A7%A3%E5%AF%86%E5%85%A5%E6%89%8B"><span class="toc-number">1.3.1.</span> <span class="toc-text">3.1 第一步：从字符串解密入手</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3-2-%E7%AC%AC%E4%BA%8C%E6%AD%A5%EF%BC%9A%E6%9E%B6%E6%9E%84%E6%80%BB%E8%A7%88"><span class="toc-number">1.3.2.</span> <span class="toc-text">3.2 第二步：架构总览</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3-3-%E7%AC%AC%E4%B8%89%E6%AD%A5%EF%BC%9A%E6%A0%B8%E5%BF%83%E5%87%BD%E6%95%B0-sub-27D40-%E6%B7%B1%E5%BA%A6%E5%88%86%E6%9E%90"><span class="toc-number">1.3.3.</span> <span class="toc-text">3.3 第三步：核心函数 sub_27D40 深度分析</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3-4-%E5%86%85%E5%AD%98%E8%AF%BB%E5%86%99%E6%9C%BA%E5%88%B6"><span class="toc-number">1.3.4.</span> <span class="toc-text">3.4 内存读写机制</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3-5-%E5%8F%8D%E6%A3%80%E6%B5%8B%E6%9C%BA%E5%88%B6"><span class="toc-number">1.3.5.</span> <span class="toc-text">3.5 反检测机制</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3-6-SurfaceFlinger-Overlay-%E6%B8%B2%E6%9F%93%E4%BD%93%E7%B3%BB"><span class="toc-number">1.3.6.</span> <span class="toc-text">3.6 SurfaceFlinger Overlay 渲染体系</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-%E7%BB%93%E8%AE%BA"><span class="toc-number">1.4.</span> <span class="toc-text">4. 结论</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#4-1-%E5%88%86%E6%9E%90%E6%88%90%E6%9E%9C%E6%B1%87%E6%80%BB"><span class="toc-number">1.4.1.</span> <span class="toc-text">4.1 分析成果汇总</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#4-2-%E6%A0%B8%E5%BF%83%E5%8F%91%E7%8E%B0%EF%BC%9A%E6%AD%A6%E5%99%A8%E6%B3%A8%E5%85%A5-%E6%8A%80%E8%83%BD%E4%BF%AE%E6%94%B9-ESP-%E8%87%AA%E7%9E%84%E4%B8%89%E5%90%88%E4%B8%80"><span class="toc-number">1.4.2.</span> <span class="toc-text">4.2 核心发现：武器注入 + 技能修改 + ESP&#x2F;自瞄三合一</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#4-3-%E5%85%A8%E5%B1%80%E5%8F%98%E9%87%8F%E6%98%A0%E5%B0%84%E6%80%BB%E7%BB%93"><span class="toc-number">1.4.3.</span> <span class="toc-text">4.3 全局变量映射总结</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#4-4-%E5%8F%8D%E6%A3%80%E6%B5%8B%E4%BD%93%E7%B3%BB%E6%80%BB%E7%BB%93"><span class="toc-number">1.4.4.</span> <span class="toc-text">4.4 反检测体系总结</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#4-5-AI-%E9%80%86%E5%90%91%E5%B7%A5%E4%BD%9C%E6%B5%81%E8%AF%84%E4%BB%B7"><span class="toc-number">1.4.5.</span> <span class="toc-text">4.5 AI 逆向工作流评价</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#4-6-%E9%81%97%E7%95%99%E9%97%AE%E9%A2%98"><span class="toc-number">1.4.6.</span> <span class="toc-text">4.6 遗留问题</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-%E4%BD%9C%E8%80%85%E7%A2%8E%E7%A2%8E%E5%BF%B5"><span class="toc-number">1.5.</span> <span class="toc-text">5.作者碎碎念</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原">DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E9%9B%B6%E6%90%AD%E5%BB%BA%E4%B8%80%E4%B8%AA%E6%8A%80%E6%9C%AF%E5%8D%9A%E5%AE%A2%E2%80%94%E2%80%94Hexo-Butterfly%E4%B8%BB%E9%A2%98%E6%B7%B1%E5%BA%A6%E5%AE%9A%E5%88%B6%E5%AE%9E%E5%BD%95/" title="从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录">从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录</a><time datetime="2026-05-29T14:00:00.000Z" title="发表于 2026-05-29 22:00:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/" title="从规则到偏好——用强化学习做游戏直播AI切片">从规则到偏好——用强化学习做游戏直播AI切片</a><time datetime="2026-05-29T07:30:00.000Z" title="发表于 2026-05-29 15:30:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</a><time datetime="2026-05-25T04:00:00.000Z" title="发表于 2026-05-25 12:00:00">2026-05-25</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档">斗鱼直播 AI 分析系统 — 项目文档</a><time datetime="2026-05-25T02:40:00.000Z" title="发表于 2026-05-25 10:40:00">2026-05-25</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

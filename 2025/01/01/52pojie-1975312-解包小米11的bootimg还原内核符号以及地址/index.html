@@ -1,0 +1,280 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>解包小米11的boot.img，还原内核符号以及地址 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="**0x0 前言**  因为一些教程过于老旧，为了防止自己以后重复踩坑，故记录一下学习过程中遇到的一些坑和现在有效的方法。  设备：mi 11 venus 内核版本5.4.210  **0x1 解包boot.img**  提取内核什么的就直接跳过，网上有很多资料都是可以直接用的，去官网下包或者有root的dd提取都可以。  首先先大概了解一下安卓内核  比较重要的几个分区如下：  1">
+<meta property="og:type" content="article">
+<meta property="og:title" content="解包小米11的boot.img，还原内核符号以及地址">
+<meta property="og:url" content="https://brszzz.github.io/2025/01/01/52pojie-1975312-%E8%A7%A3%E5%8C%85%E5%B0%8F%E7%B1%B311%E7%9A%84bootimg%E8%BF%98%E5%8E%9F%E5%86%85%E6%A0%B8%E7%AC%A6%E5%8F%B7%E4%BB%A5%E5%8F%8A%E5%9C%B0%E5%9D%80/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="**0x0 前言**  因为一些教程过于老旧，为了防止自己以后重复踩坑，故记录一下学习过程中遇到的一些坑和现在有效的方法。  设备：mi 11 venus 内核版本5.4.210  **0x1 解包boot.img**  提取内核什么的就直接跳过，网上有很多资料都是可以直接用的，去官网下包或者有root的dd提取都可以。  首先先大概了解一下安卓内核  比较重要的几个分区如下：  1">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2024-12-31T16:00:00.000Z">
+<meta property="article:modified_time" content="2026-06-21T15:49:40.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="Root">
+<meta property="article:tag" content="Linux内核">
+<meta property="article:tag" content="DEX">
+<meta property="article:tag" content="Python">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "解包小米11的boot.img，还原内核符号以及地址",
+  "url": "https://brszzz.github.io/2025/01/01/52pojie-1975312-%E8%A7%A3%E5%8C%85%E5%B0%8F%E7%B1%B311%E7%9A%84bootimg%E8%BF%98%E5%8E%9F%E5%86%85%E6%A0%B8%E7%AC%A6%E5%8F%B7%E4%BB%A5%E5%8F%8A%E5%9C%B0%E5%9D%80/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2024-12-31T16:00:00.000Z",
+  "dateModified": "2026-06-21T15:49:40.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2025/01/01/52pojie-1975312-%E8%A7%A3%E5%8C%85%E5%B0%8F%E7%B1%B311%E7%9A%84bootimg%E8%BF%98%E5%8E%9F%E5%86%85%E6%A0%B8%E7%AC%A6%E5%8F%B7%E4%BB%A5%E5%8F%8A%E5%9C%B0%E5%9D%80/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '解包小米11的boot.img，还原内核符号以及地址',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">解包小米11的boot.img，还原内核符号以及地址</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">解包小米11的boot.img，还原内核符号以及地址</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-12-31T16:00:00.000Z" title="发表于 2025-01-01 00:00:00">2025-01-01</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-21T15:49:40.000Z" title="更新于 2026-06-21 23:49:40">2026-06-21</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E8%BD%AF%E4%BB%B6%E8%B0%83%E8%AF%95/">软件调试</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">7.7k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>28 mins.分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h3 id="0x0-前言"><a href="#0x0-前言" class="headerlink" title="0x0 前言"></a>0x0 前言</h3><p>因为一些教程过于老旧，为了防止自己以后重复踩坑，故记录一下学习过程中遇到的一些坑和现在有效的方法。</p>
+<p>设备：mi 11 venus 内核版本5.4.210</p>
+<h3 id="0x1-解包boot-img"><a href="#0x1-解包boot-img" class="headerlink" title="0x1 解包boot.img"></a>0x1 解包boot.img</h3><p>提取内核什么的就直接跳过，网上有很多资料都是可以直接用的，去官网下包或者有root的dd提取都可以。</p>
+<p>首先先大概了解一下安卓内核</p>
+<p>比较重要的几个分区如下：</p>
+<p>1、&#x2F;boot分区：该分区主要包含android kernel镜像和ramdisk（一种将RAM模拟为硬盘的技术，提高访问速度）。</p>
+<p>2、&#x2F;system分区：该分区主要存放Android框架及其相关配置，包含系统预装的app。</p>
+<p>3、&#x2F;recovery分区：该分区主要是备份的分区</p>
+<p>4、&#x2F;data 用户数据的存储区域</p>
+<p>&#x2F;data&#x2F;app&#x2F;com.xxxx&#x2F; 以包名存放应用安装文件，包括base.apk &#x2F;lib</p>
+<p>&#x2F;data&#x2F;data&#x2F;com.xxxx&#x2F; 存放应用数据，包括sp、db等</p>
+<p>&#x2F;data&#x2F;dalvik-cache 以包名存放优化过的应用dex文件</p>
+<p>5、&#x2F;cache分区：Android系统缓存区域，保存系统最常访问的数据和应用程序。</p>
+<p>6、&#x2F;misc分区：此分区包含一些系统功能设置开关和数据，比如USB设置。 </p>
+<p>7、sdcard分区：外置存储分区</p>
+<p>8、&#x2F;vendor分区：厂商定制的分区，厂商的某些系统升级可以通过这个分区来实现。</p>
+<p>boot.img就是android系统的Linux内核主要的镜像文件，在该文件中大致包含boot header，kernel，ramdisk。</p>
+<p>boot.img文件跳过2K的文件头之后，包含两个gz压缩包，一个是boot.img-kernel.gz Linux内核，一个是boot.img-ramdisk.cpio.gz，然后加上ramdisk文件。</p>
+<blockquote>
+<p><a target="_blank" rel="noopener" href="https://bbs.kanxue.com/thread-266625.htm">https://bbs.kanxue.com/thread-266625.htm</a></p>
+</blockquote>
+<p>然后我按照这篇文章中的步骤尝试去提取kernel的时候发现里面的工具不能正常解析mi11的boot，尝试了其他的一些工具也无法正常提取</p>
+<p><img src="https://attach.52pojie.cn/forum/202410/24/160653iiiji3ci9mcp99pi.png"></p>
+<p><img src="https://attach.52pojie.cn/forum/202410/24/161313lxgw8ony6x9whk4r.png"></p>
+<p><img src="https://attach.52pojie.cn/forum/202410/24/160657rfroxto8nowx99ot.png"></p>
+<p>正在我看他各种工具实现方法，binwalk解出来的包死活解压不了的时候，突然想起来很久之前root的时候看到的一个工具</p>
+<blockquote>
+<p><a target="_blank" rel="noopener" href="https://github.com/affggh/magiskbootkitchen">https://github.com/affggh/magiskbootkitchen</a></p>
+</blockquote>
+<p>用这个能正常提取，那就先偷个懒，以后有空再看看那些工具的原理和失效的原因，不过感觉是因为这个内核删掉了一些信息。</p>
+<p><img src="https://attach.52pojie.cn/forum/202410/24/162520wfvocwqftzfzyqhu.png"></p>
+<p>用magiskbootkitchen提取之后，获得了两个文件</p>
+<p><img src="https://attach.52pojie.cn/forum/202410/24/162638njur8yxjraq8ljwx.png"></p>
+<p>把文件放到ida里，能正常识别</p>
+<p><img src="https://attach.52pojie.cn/forum/202410/24/163124pypu12uvc7ttrl1v.png"></p>
+<h3 id="0x2-获取内核符号地址"><a href="#0x2-获取内核符号地址" class="headerlink" title="0x2 获取内核符号地址"></a>0x2 获取内核符号地址</h3><p>然后就是获取内核符号地址了</p>
+<p>首先先去除kptr_restrict，然后就能在  &#x2F;proc&#x2F;kallsyms里获得内核符号的地址</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">echo 0 &gt; /proc/sys/kernel/kptr_restrict</span><br><span class="line"></span><br><span class="line">cat /proc/kallsyms &gt; kernel_symbols.txt</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p><a target="_blank" rel="noopener" href="https://zhuanlan.zhihu.com/p/359234823">https://zhuanlan.zhihu.com/p/359234823</a></p>
+</blockquote>
+<p><img src="https://attach.52pojie.cn/forum/202410/24/164235zfz73qc3psk4wdkq.png"></p>
+<p>我查资料正常来说内核的起始地址应该是0xffffffc000080000,但是我这个起始地址是0xFFFFFFE54F280000，在ida里重新设定基地址 Edit–&gt;Segments–&gt; Rebase Program，然后用python脚本按照kernel_symbols.txt里的对照关系把所有函数都重命名一下</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> idaapi</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> idautils</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> idc</span><br><span class="line"></span><br><span class="line"> </span><br><span class="line"></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">do_rename</span>(<span class="params">l</span>):</span><br><span class="line"></span><br><span class="line"> splitted = l.split()</span><br><span class="line"></span><br><span class="line"> straddr = splitted[<span class="number">0</span>]</span><br><span class="line"></span><br><span class="line"> strname = splitted[<span class="number">2</span>].replace(<span class="string">&quot;\r&quot;</span>, <span class="string">&quot;&quot;</span>).replace(<span class="string">&quot;\n&quot;</span>, <span class="string">&quot;&quot;</span>)</span><br><span class="line"></span><br><span class="line"> </span><br><span class="line"></span><br><span class="line"> eaaddr = <span class="built_in">int</span>(straddr, <span class="number">16</span>)</span><br><span class="line"></span><br><span class="line"> idc.create_insn(eaaddr)</span><br><span class="line"></span><br><span class="line"> ida_funcs.add_func(eaaddr)</span><br><span class="line"></span><br><span class="line"> idc.set_name(<span class="built_in">int</span>(straddr, <span class="number">16</span>), strname, idc.SN_NOWARN)</span><br><span class="line"></span><br><span class="line"> </span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> __name__ == <span class="string">&quot;__main__&quot;</span>:</span><br><span class="line"></span><br><span class="line"> ida_kernwin.msg(<span class="string">&quot;Hello IDC&quot;</span>)</span><br><span class="line"></span><br><span class="line"> f = <span class="built_in">open</span>( <span class="string">&quot;F:\\kernel_symbols.txt&quot;</span>, <span class="string">&quot;r&quot;</span>)</span><br><span class="line"></span><br><span class="line"> <span class="keyword">for</span> l <span class="keyword">in</span> f:</span><br><span class="line"></span><br><span class="line"> do_rename(l)</span><br><span class="line"></span><br><span class="line"> f.close()</span><br></pre></td></tr></table></figure>
+
+<p>这个是ida pro 7.7的,如果脚本语法版本不对的话</p>
+<blockquote>
+<p><a target="_blank" rel="noopener" href="https://docs.hex-rays.com/archive/porting-guide-for-ida-7.4-turning-off-ida-6.x-api-backwards-compatibility-by-default">https://docs.hex-rays.com/archive/porting-guide-for-ida-7.4-turning-off-ida-6.x-api-backwards-compatibility-by-default</a></p>
+</blockquote>
+<p>参考这个修改一下对应的函数。</p>
+<p>看一下效果</p>
+<p><img src="https://attach.52pojie.cn/forum/202410/24/165310v1ejepjhqeerz7vr.png"></p>
+<p>至此还原符号成功了。</p>
+<h3 id="0x3-小结"><a href="#0x3-小结" class="headerlink" title="0x3 小结"></a>0x3 小结</h3><p>起始如果只是想看内核函数的话，之前有个大佬给的这个网址</p>
+<blockquote>
+<p><a target="_blank" rel="noopener" href="https://elixir.bootlin.com/linux/v6.11.5/source">https://elixir.bootlin.com/linux/v6.11.5/source</a></p>
+</blockquote>
+<p>就能直接看各个版本内核函数的源码，不过各个厂商之间好像还是会有一些差距，用本文的方法还原出来的会更全一点。</p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2025/01/01/52pojie-1975312-%E8%A7%A3%E5%8C%85%E5%B0%8F%E7%B1%B311%E7%9A%84bootimg%E8%BF%98%E5%8E%9F%E5%86%85%E6%A0%B8%E7%AC%A6%E5%8F%B7%E4%BB%A5%E5%8F%8A%E5%9C%B0%E5%9D%80/">https://brszzz.github.io/2025/01/01/52pojie-1975312-%E8%A7%A3%E5%8C%85%E5%B0%8F%E7%B1%B311%E7%9A%84bootimg%E8%BF%98%E5%8E%9F%E5%86%85%E6%A0%B8%E7%AC%A6%E5%8F%B7%E4%BB%A5%E5%8F%8A%E5%9C%B0%E5%9D%80/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Root/">Root</a><a class="post-meta__tags" href="/tags/Linux%E5%86%85%E6%A0%B8/">Linux内核</a><a class="post-meta__tags" href="/tags/DEX/">DEX</a><a class="post-meta__tags" href="/tags/Python/">Python</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/" title="AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本</div></div><div class="info-2"><div class="info-item-1">## AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本  ### 1. 引言  本文记录了一次完整的安卓 ELF（.so）外挂样本逆向分析过程。样本是一个面向某 UE4 射击游戏的游戏作弊模块，基于 Unreal Engine 4 引擎开发。 传统逆向工程依赖人工阅读反汇编代码、逐条追踪指令流，分析周期通常以天甚至周计。本文展示如何利用 **AI 辅助逆向** 工作</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1980334-N1CTF-reverse-ezapk-wp/" title="N1CTF-reverse-ezapk wp"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">N1CTF-reverse-ezapk wp</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  前几天忙别的去了，完全忘了N1CTF，今天想着看看题学习一下，先只下了个最简单的ezapk，结果晚上网站直接关服务器，下不了其他题了。。  这个是入门题，无混淆，反调和检测，flag格式为n1ctf{xxxxxxxxxxxxxxxxxxxxx}  **0x1 frida+jadx、ida静态分析**  我这台手机ida动调不知道为啥一直用不了，所以这里只用frida</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/" title="AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-04-29</div><div class="info-item-2">AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本</div></div><div class="info-2"><div class="info-item-1">## AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本  ### 1. 引言  本文记录了一次完整的安卓 ELF（.so）外挂样本逆向分析过程。样本是一个面向某 UE4 射击游戏的游戏作弊模块，基于 Unreal Engine 4 引擎开发。 传统逆向工程依赖人工阅读反汇编代码、逐条追踪指令流，分析周期通常以天甚至周计。本文展示如何利用 **AI 辅助逆向** 工作</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1956314-%E4%BD%BF%E7%94%A8ebpf%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93%E6%9F%90elf%E5%8A%A0%E5%AF%86%E6%A0%B7%E6%9C%AC/" title="使用ebpf分析安卓某elf加密样本"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">使用ebpf分析安卓某elf加密样本</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  今天记录一次对某安卓elf文件的加密分析的流程和使用ebpf的思路。  工具设备：  1.mi12 安卓12 内核5.10.136  2.stackplz  **0x1 十六进制dump（xxd）**  首先这个样本有两个文件，一个是elf可执行文件的启动器，一个是不知道什么格式的文件  ![](https://attach.52pojie.cn/forum/20</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1980334-N1CTF-reverse-ezapk-wp/" title="N1CTF-reverse-ezapk wp"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">N1CTF-reverse-ezapk wp</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  前几天忙别的去了，完全忘了N1CTF，今天想着看看题学习一下，先只下了个最简单的ezapk，结果晚上网站直接关服务器，下不了其他题了。。  这个是入门题，无混淆，反调和检测，flag格式为n1ctf{xxxxxxxxxxxxxxxxxxxxx}  **0x1 frida+jadx、ida静态分析**  我这台手机ida动调不知道为啥一直用不了，所以这里只用frida</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1952349-%E5%AE%89%E5%8D%93%E6%9F%90%E6%B3%A8%E5%85%A5%E7%B1%BB%E5%A4%96%E6%8C%82%E8%84%B1%E5%A3%B3%E5%92%8C%E5%8A%9F%E8%83%BD%E5%88%86%E6%9E%90%E4%B8%8B/" title="安卓某注入类外挂脱壳和功能分析—下"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">安卓某注入类外挂脱壳和功能分析—下</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  目前已经定位到动态库了，现在就来看看里面的功能逻辑是咋写的，这个环节的话其实跟reverse感觉关系已经不大了，更多的是需要对UE4引擎的理解。今天花了点时间，结合dump的游戏SDK、libUE4,把这个文件里的一些函数和变量名给还原了出来。  **0x1 找到入口函数**  1.首先是要定位到它的入口函数，一般来说动态库会用__attribute__((const</div></div></div></a><a class="pagination-related" href="/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/" title="从规则到偏好——用强化学习做游戏直播AI切片"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-29</div><div class="info-item-2">从规则到偏好——用强化学习做游戏直播AI切片</div></div><div class="info-2"><div class="info-item-1">本文记录了一套游戏直播自动切片系统的完整设计与实战过程。系统以三角洲行动FPS直播为场景，通过语音转写+画面OCR+弹幕联合分析自动识别高光时刻，并引入基于成对偏好学习的强化学习模型替代传统硬编码规则，使切片策略随用户标注逐步优化。</div></div></div></a><a class="pagination-related" href="/2026/05/25/douyu-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/" title="斗鱼直播录制与分析系统 — 项目技术文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">斗鱼直播录制与分析系统 — 项目技术文档</div></div><div class="info-2"><div class="info-item-1">完整的斗鱼直播录制与AI分析系统技术文档，涵盖弹幕协议逆向、视频流签名、Whisper语音转写、AI高光识别等核心技术实现</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER<br>qq:2132152966</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-3"><a class="toc-link" href="#0x0-%E5%89%8D%E8%A8%80"><span class="toc-number">1.</span> <span class="toc-text">0x0 前言</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#0x1-%E8%A7%A3%E5%8C%85boot-img"><span class="toc-number">2.</span> <span class="toc-text">0x1 解包boot.img</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#0x2-%E8%8E%B7%E5%8F%96%E5%86%85%E6%A0%B8%E7%AC%A6%E5%8F%B7%E5%9C%B0%E5%9D%80"><span class="toc-number">3.</span> <span class="toc-text">0x2 获取内核符号地址</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#0x3-%E5%B0%8F%E7%BB%93"><span class="toc-number">4.</span> <span class="toc-text">0x3 小结</span></a></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原">DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E9%9B%B6%E6%90%AD%E5%BB%BA%E4%B8%80%E4%B8%AA%E6%8A%80%E6%9C%AF%E5%8D%9A%E5%AE%A2%E2%80%94%E2%80%94Hexo-Butterfly%E4%B8%BB%E9%A2%98%E6%B7%B1%E5%BA%A6%E5%AE%9A%E5%88%B6%E5%AE%9E%E5%BD%95/" title="从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录">从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录</a><time datetime="2026-05-29T14:00:00.000Z" title="发表于 2026-05-29 22:00:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/" title="从规则到偏好——用强化学习做游戏直播AI切片">从规则到偏好——用强化学习做游戏直播AI切片</a><time datetime="2026-05-29T07:30:00.000Z" title="发表于 2026-05-29 15:30:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</a><time datetime="2026-05-25T04:00:00.000Z" title="发表于 2026-05-25 12:00:00">2026-05-25</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档">斗鱼直播 AI 分析系统 — 项目文档</a><time datetime="2026-05-25T02:40:00.000Z" title="发表于 2026-05-25 10:40:00">2026-05-25</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

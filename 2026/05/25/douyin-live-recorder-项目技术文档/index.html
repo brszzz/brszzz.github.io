@@ -1,0 +1,386 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>抖音直播录制工具 — 项目技术文档 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="Python CLI 抖音直播录制工具，支持高清视频原画下载和时间同步弹幕采集，含完整技术架构与逆向实现细节">
+<meta property="og:type" content="article">
+<meta property="og:title" content="抖音直播录制工具 — 项目技术文档">
+<meta property="og:url" content="https://brszzz.github.io/2026/05/25/douyin-live-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="Python CLI 抖音直播录制工具，支持高清视频原画下载和时间同步弹幕采集，含完整技术架构与逆向实现细节">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2026-05-25T02:35:00.000Z">
+<meta property="article:modified_time" content="2026-06-21T15:49:40.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="Python">
+<meta property="article:tag" content="逆向工程">
+<meta property="article:tag" content="抖音">
+<meta property="article:tag" content="直播录制">
+<meta property="article:tag" content="弹幕采集">
+<meta property="article:tag" content="Protobuf">
+<meta property="article:tag" content="FFmpeg">
+<meta property="article:tag" content="WebSocket">
+<meta property="article:tag" content="asyncio">
+<meta property="article:tag" content="自动化">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "抖音直播录制工具 — 项目技术文档",
+  "url": "https://brszzz.github.io/2026/05/25/douyin-live-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2026-05-25T02:35:00.000Z",
+  "dateModified": "2026-06-21T15:49:40.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2026/05/25/douyin-live-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '抖音直播录制工具 — 项目技术文档',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">抖音直播录制工具 — 项目技术文档</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">抖音直播录制工具 — 项目技术文档</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-05-25T02:35:00.000Z" title="发表于 2026-05-25 10:35:00">2026-05-25</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-21T15:49:40.000Z" title="更新于 2026-06-21 23:49:40">2026-06-21</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E7%9B%B4%E6%92%AD%E6%8A%80%E6%9C%AF/">直播技术</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">13k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>48 mins.分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h2 id="项目概述"><a href="#项目概述" class="headerlink" title="项目概述"></a>项目概述</h2><p>一个 Python CLI 工具，用于录制抖音（Douyin）直播流，支持<strong>高清视频原画下载</strong>和<strong>时间同步弹幕采集</strong>。视频通过 ffmpeg 以 <code>-c copy</code> 零损耗下载 FLV 流，弹幕通过 WebSocket 实时捕获聊天消息，使用单调时钟锚点实现视频与弹幕的时间对齐。</p>
+<ul>
+<li><strong>语言</strong>: Python 3.10+</li>
+<li><strong>许可</strong>: 内部使用</li>
+<li><strong>版本</strong>: 0.1.0</li>
+</ul>
+<hr>
+<h2 id="使用方法"><a href="#使用方法" class="headerlink" title="使用方法"></a>使用方法</h2><h3 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">pip install -e .</span><br></pre></td></tr></table></figure>
+
+<h3 id="系统依赖"><a href="#系统依赖" class="headerlink" title="系统依赖"></a>系统依赖</h3><table>
+<thead>
+<tr>
+<th>依赖</th>
+<th>用途</th>
+<th>安装方式</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ffmpeg</td>
+<td>视频流下载</td>
+<td><code>winget install ffmpeg</code> &#x2F; <code>brew install ffmpeg</code></td>
+</tr>
+<tr>
+<td>Node.js</td>
+<td>WebSocket 签名生成 (可选)</td>
+<td><code>winget install nodejs</code></td>
+</tr>
+</tbody></table>
+<h3 id="命令行"><a href="#命令行" class="headerlink" title="命令行"></a>命令行</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 基本用法 — 录制直播（视频 + 弹幕）</span></span><br><span class="line">douyin-live-recorder https://live.douyin.com/123456789</span><br><span class="line"></span><br><span class="line"><span class="comment"># 指定输出目录</span></span><br><span class="line">douyin-live-recorder https://live.douyin.com/123456789 -o ./my_recordings</span><br><span class="line"></span><br><span class="line"><span class="comment"># 仅录制弹幕（跳过视频）</span></span><br><span class="line">douyin-live-recorder https://live.douyin.com/123456789 --only-danmaku</span><br><span class="line"></span><br><span class="line"><span class="comment"># 仅录制视频（跳过弹幕）</span></span><br><span class="line">douyin-live-recorder https://live.douyin.com/123456789 --only-video</span><br><span class="line"></span><br><span class="line"><span class="comment"># 定时录制（60秒后自动停止）</span></span><br><span class="line">douyin-live-recorder https://live.douyin.com/123456789 --<span class="built_in">timeout</span> 60</span><br><span class="line"></span><br><span class="line"><span class="comment"># 使用 Cookie（某些直播间需要登录）</span></span><br><span class="line">douyin-live-recorder https://live.douyin.com/123456789 --cookie <span class="string">&quot;ttwid=xxx; sessionid=xxx&quot;</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 浏览器登录获取 Cookie</span></span><br><span class="line">douyin-live-recorder --login --phone 13812345678</span><br><span class="line"></span><br><span class="line"><span class="comment"># 视频质量选择</span></span><br><span class="line">douyin-live-recorder https://live.douyin.com/123456789 -q hd    <span class="comment"># 高清</span></span><br><span class="line">douyin-live-recorder https://live.douyin.com/123456789 -q sd    <span class="comment"># 标清</span></span><br><span class="line">douyin-live-recorder https://live.douyin.com/123456789 -q original  <span class="comment"># 原画（默认）</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 输出格式</span></span><br><span class="line">douyin-live-recorder https://live.douyin.com/123456789 -f mp4   <span class="comment"># MP4（自动 remux）</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 自动监听模式 — 监听直播间，开播后自动录制</span></span><br><span class="line">douyin-live-recorder --auto</span><br><span class="line"></span><br><span class="line"><span class="comment"># 指定配置文件</span></span><br><span class="line">douyin-live-recorder --auto --config my_rooms.json</span><br></pre></td></tr></table></figure>
+
+<h3 id="自动监听模式"><a href="#自动监听模式" class="headerlink" title="自动监听模式"></a>自动监听模式</h3><p><code>--auto</code> 模式通过 JSON 配置文件持续监听多个直播间，检测到开播后自动启动录制，直播结束后自动回到监听状态。</p>
+<p><strong>工作流程</strong>:</p>
+<ol>
+<li>读取配置文件中所有房间</li>
+<li>每隔 N 秒循环检查每个房间是否开播</li>
+<li>检测到开播 → 后台启动 Recorder（视频 + 弹幕双录）</li>
+<li>直播结束 → 自动 finalize 文件，该房间恢复监听</li>
+<li>支持多房间同时录制（各自独立 asyncio Task）</li>
+<li>Ctrl+C → 优雅停止所有录制并退出</li>
+</ol>
+<hr>
+<h2 id="项目架构"><a href="#项目架构" class="headerlink" title="项目架构"></a>项目架构</h2><h3 id="数据流"><a href="#数据流" class="headerlink" title="数据流"></a>数据流</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line">直播URL</span><br><span class="line">  │</span><br><span class="line">  ▼</span><br><span class="line">[stream_url.py]  ──► VideoStreamInfo (room_id, anchor_name, stream_urls, cookies)</span><br><span class="line">  │</span><br><span class="line">  ├─ HTML 页面解析 (正则提取 flv_pull_url)</span><br><span class="line">  └─ API 回退 (/webcast/room/web/enter/)</span><br><span class="line">  │</span><br><span class="line">  ▼</span><br><span class="line">[recorder.py]  Orchestrator</span><br><span class="line">  │</span><br><span class="line">  ├──► [video_recorder.py]  ffmpeg -c copy → .flv 文件</span><br><span class="line">  │</span><br><span class="line">  └──► [danmaku/websocket_client.py]  WSS 连接</span><br><span class="line">         │</span><br><span class="line">         ▼</span><br><span class="line">       [danmaku/parser.py]  手动 Protobuf 解析</span><br><span class="line">         │</span><br><span class="line">         ▼</span><br><span class="line">       [output.py]  按行写入 JSON → finalize 格式化</span><br></pre></td></tr></table></figure>
+
+<h3 id="核心设计"><a href="#核心设计" class="headerlink" title="核心设计"></a>核心设计</h3><h4 id="1-双协程并发架构"><a href="#1-双协程并发架构" class="headerlink" title="1. 双协程并发架构"></a>1. 双协程并发架构</h4><p><code>Recorder.run()</code> 创建两个独立的 asyncio 任务：</p>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th>类</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>视频录制</td>
+<td><code>VideoRecorder</code></td>
+<td>ffmpeg 子进程下载 FLV 流，<code>-c copy</code> 无重编码</td>
+</tr>
+<tr>
+<td>弹幕采集</td>
+<td><code>DanmakuClient</code></td>
+<td>WebSocket 接收二进制帧，解析 Protobuf 消息</td>
+</tr>
+</tbody></table>
+<h4 id="2-时间同步机制"><a href="#2-时间同步机制" class="headerlink" title="2. 时间同步机制"></a>2. 时间同步机制</h4><ul>
+<li><strong>单调时钟</strong> (<code>time.monotonic()</code>) — 不受系统时间调整影响，用于弹幕 offset_ms</li>
+<li><strong>本地时间</strong> (<code>datetime.now()</code>) — 用于输出目录&#x2F;文件名、wall_start 元数据</li>
+</ul>
+<h4 id="3-流地址提取-—-两层策略"><a href="#3-流地址提取-—-两层策略" class="headerlink" title="3. 流地址提取 — 两层策略"></a>3. 流地址提取 — 两层策略</h4><ol>
+<li><strong>HTML 正则解析</strong>（优先） — 直接从直播页面 <code>&lt;script&gt;</code> 标签中提取 <code>flv_pull_url</code></li>
+<li><strong>API 回退</strong> — 调用 <code>/webcast/room/web/enter/</code> API，携带 X-Bogus 签名</li>
+</ol>
+<p>支持的画质: <code>FULL_HD1</code> (原画), <code>HD1</code> (高清), <code>SD1</code>&#x2F;<code>SD2</code> (标清)</p>
+<h4 id="4-弹幕-WebSocket-协议"><a href="#4-弹幕-WebSocket-协议" class="headerlink" title="4. 弹幕 WebSocket 协议"></a>4. 弹幕 WebSocket 协议</h4><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">WebSocket 二进制帧</span><br><span class="line">  → PushFrame (protobuf)</span><br><span class="line">    → field 8: gzip 压缩的 Response</span><br><span class="line">      → Response.message (repeated)</span><br><span class="line">        → Message &#123; method, payload &#125;</span><br><span class="line">          → ChatMessage / GiftMessage / LikeMessage / MemberMessage / ...</span><br></pre></td></tr></table></figure>
+
+<p><strong>心跳机制</strong>:</p>
+<ul>
+<li>WebSocket 层: <code>ping_interval=10s</code>（库级别 ping&#x2F;pong）</li>
+<li>应用层: 每 10 秒发送 <code>PushFrame&#123;payloadType=&#39;hb&#39;&#125;</code>（业务心跳）</li>
+<li>收到数据帧后发送 <code>PushFrame&#123;payloadType=&#39;ack&#39;, logId=...&#125;</code>（ACK 确认）</li>
+</ul>
+<p><strong>重连策略</strong>:</p>
+<ul>
+<li>异常关闭 → 指数退避重连（1s → 2s → 4s → … → 30s 封顶）</li>
+<li>正常关闭（code 1000&#x2F;1001&#x2F;1005）→ 判定为直播结束，停止重连</li>
+</ul>
+<h4 id="5-手动-Protobuf-解析器"><a href="#5-手动-Protobuf-解析器" class="headerlink" title="5. 手动 Protobuf 解析器"></a>5. 手动 Protobuf 解析器</h4><p><strong>不需要 <code>.proto</code> 编译</strong>，纯 Python 实现 varint + wire-type 解析。</p>
+<p>支持 11 种消息类型：弹幕消息、礼物消息、用户进入&#x2F;离开、点赞、关注&#x2F;分享、观众人数等。</p>
+<p>输出仅保存 <code>chat</code> 类型消息，字段精简为 <code>nickname</code> + <code>content</code> + <code>timestamp</code>。</p>
+<h4 id="6-X-Bogus-签名-—-纯-Python-实现"><a href="#6-X-Bogus-签名-—-纯-Python-实现" class="headerlink" title="6. X-Bogus 签名 — 纯 Python 实现"></a>6. X-Bogus 签名 — 纯 Python 实现</h4><ol>
+<li>构建 query string → 追加 4 字节随机 nonce</li>
+<li>RC4 加密（使用 Douyin 自定义 S-Box，密钥来自 User-Agent 的 MD5）</li>
+<li>MD5 哈希</li>
+<li>自定义 Base62 编码 → <code>&#123;encoded&#125;_&#123;nonce_hex&#125;</code></li>
+</ol>
+<h4 id="7-优雅关闭"><a href="#7-优雅关闭" class="headerlink" title="7. 优雅关闭"></a>7. 优雅关闭</h4><ul>
+<li><code>SIGINT</code>&#x2F;<code>SIGTERM</code> → <code>loop.call_soon_threadsafe(shutdown_event.set)</code></li>
+<li>ffmpeg 停止: 先 <code>stdin.write(b&quot;q\n&quot;)</code> → SIGTERM → SIGKILL 三级回退</li>
+<li>弹幕连接: cancel asyncio task → <code>DanmakuClient.close()</code></li>
+<li>弹幕文件: 从 <code>.tmp</code> 读取所有行 → 写入格式化 JSON → 删除临时文件</li>
+</ul>
+<hr>
+<h2 id="技术栈"><a href="#技术栈" class="headerlink" title="技术栈"></a>技术栈</h2><table>
+<thead>
+<tr>
+<th>类别</th>
+<th>技术</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>语言</td>
+<td>Python 3.10+</td>
+<td>asyncio 异步架构</td>
+</tr>
+<tr>
+<td>视频下载</td>
+<td>ffmpeg</td>
+<td><code>-c copy</code> 零损耗，异步子进程</td>
+</tr>
+<tr>
+<td>WebSocket</td>
+<td><code>websockets&gt;=12.0</code></td>
+<td>原生 asyncio 支持</td>
+</tr>
+<tr>
+<td>HTTP</td>
+<td><code>aiohttp&gt;=3.9</code></td>
+<td>异步 HTTP 请求</td>
+</tr>
+<tr>
+<td>序列化</td>
+<td>手动 Protobuf 解析</td>
+<td>无需 protoc 编译</td>
+</tr>
+<tr>
+<td>签名</td>
+<td>纯 Python RC4+Base62</td>
+<td>参见 signer.py</td>
+</tr>
+<tr>
+<td>浏览器自动化</td>
+<td>Playwright</td>
+<td>仅用于登录流程</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="技术难点与解决方案"><a href="#技术难点与解决方案" class="headerlink" title="技术难点与解决方案"></a>技术难点与解决方案</h2><h3 id="1-Protobuf-字段号逆向"><a href="#1-Protobuf-字段号逆向" class="headerlink" title="1. Protobuf 字段号逆向"></a>1. Protobuf 字段号逆向</h3><p><strong>问题</strong>: 抖音弹幕使用私有 Protobuf schema，官方无文档。初始版本所有解析器字段号都错误。</p>
+<p><strong>解决</strong>: 在 <code>parser.py</code> 中输出 PushFrame 原始字段，定位到 <code>Response.messages[].method</code>，逐个消息类型确认字段结构。</p>
+<h3 id="2-Ctrl-C-无法停止录制"><a href="#2-Ctrl-C-无法停止录制" class="headerlink" title="2. Ctrl+C 无法停止录制"></a>2. Ctrl+C 无法停止录制</h3><p><strong>问题</strong>: Windows 下的信号处理器运行在独立线程中，直接调用 <code>asyncio.Event.set()</code> 不是线程安全的。</p>
+<p><strong>解决</strong>: 修改为 <code>loop.call_soon_threadsafe(shutdown_event.set)</code>，将事件设置操作调度到事件循环线程执行。</p>
+<h3 id="3-WebSocket-连接成功但无数据推送"><a href="#3-WebSocket-连接成功但无数据推送" class="headerlink" title="3. WebSocket 连接成功但无数据推送"></a>3. WebSocket 连接成功但无数据推送</h3><p><strong>解决</strong>:</p>
+<ul>
+<li><code>cursor</code> 参数格式必须完全复刻浏览器</li>
+<li><code>internal_ext</code> 格式必须匹配</li>
+<li><code>user_unique_id</code> 必须是 12 位随机数字</li>
+<li>建立连接后必须发送 <code>PushFrame&#123;payloadType=&#39;msg&#39;&#125;</code> 订阅消息</li>
+</ul>
+<h3 id="4-时区问题"><a href="#4-时区问题" class="headerlink" title="4. 时区问题"></a>4. 时区问题</h3><p><strong>问题</strong>: <code>datetime.now(timezone.utc)</code> 导致在中国使用时文件名显示 UTC 时间。</p>
+<p><strong>解决</strong>: 全部改为 <code>datetime.now()</code>（naive local time）。</p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2026/05/25/douyin-live-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/">https://brszzz.github.io/2026/05/25/douyin-live-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Python/">Python</a><a class="post-meta__tags" href="/tags/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a><a class="post-meta__tags" href="/tags/%E6%8A%96%E9%9F%B3/">抖音</a><a class="post-meta__tags" href="/tags/%E7%9B%B4%E6%92%AD%E5%BD%95%E5%88%B6/">直播录制</a><a class="post-meta__tags" href="/tags/%E5%BC%B9%E5%B9%95%E9%87%87%E9%9B%86/">弹幕采集</a><a class="post-meta__tags" href="/tags/Protobuf/">Protobuf</a><a class="post-meta__tags" href="/tags/FFmpeg/">FFmpeg</a><a class="post-meta__tags" href="/tags/WebSocket/">WebSocket</a><a class="post-meta__tags" href="/tags/asyncio/">asyncio</a><a class="post-meta__tags" href="/tags/%E8%87%AA%E5%8A%A8%E5%8C%96/">自动化</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">斗鱼直播 AI 分析系统 — 项目文档</div></div><div class="info-2"><div class="info-item-1">斗鱼直播自动录制+AI智能分析系统，通过DeepSeek/Claude大模型进行多维度分析，自动识别直播精彩片段和高光时刻</div></div></div></a><a class="pagination-related" href="/2026/05/25/douyu-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/" title="斗鱼直播录制与分析系统 — 项目技术文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">斗鱼直播录制与分析系统 — 项目技术文档</div></div><div class="info-2"><div class="info-item-1">完整的斗鱼直播录制与AI分析系统技术文档，涵盖弹幕协议逆向、视频流签名、Whisper语音转写、AI高光识别等核心技术实现</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2026/05/25/douyu-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/" title="斗鱼直播录制与分析系统 — 项目技术文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">斗鱼直播录制与分析系统 — 项目技术文档</div></div><div class="info-2"><div class="info-item-1">完整的斗鱼直播录制与AI分析系统技术文档，涵盖弹幕协议逆向、视频流签名、Whisper语音转写、AI高光识别等核心技术实现</div></div></div></a><a class="pagination-related" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">斗鱼直播 AI 分析系统 — 项目文档</div></div><div class="info-2"><div class="info-item-1">斗鱼直播自动录制+AI智能分析系统，通过DeepSeek/Claude大模型进行多维度分析，自动识别直播精彩片段和高光时刻</div></div></div></a><a class="pagination-related" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-21</div><div class="info-item-2">DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原</div></div><div class="info-2"><div class="info-item-1">本文记录了对一款伪装为 shell 脚本的 ARM64 ELF 外挂文件进行深度逆向分析的完整过程。从初始 OLLVM 控制流平坦化误判出发，通过 PAC 序言检测、字节码协议发现和 12 调度器架构分析，最终揭示其真实面目为一个针对 UE4 移动游戏对象遍历的领域特定虚拟机（DSVM）。文章详述了 Capstone + Unicorn 工具链的工程实践、790 个操作码的语义提取，以及恶意代码检测的全流程。</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1975312-%E8%A7%A3%E5%8C%85%E5%B0%8F%E7%B1%B311%E7%9A%84bootimg%E8%BF%98%E5%8E%9F%E5%86%85%E6%A0%B8%E7%AC%A6%E5%8F%B7%E4%BB%A5%E5%8F%8A%E5%9C%B0%E5%9D%80/" title="解包小米11的boot.img，还原内核符号以及地址"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">解包小米11的boot.img，还原内核符号以及地址</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  因为一些教程过于老旧，为了防止自己以后重复踩坑，故记录一下学习过程中遇到的一些坑和现在有效的方法。  设备：mi 11 venus 内核版本5.4.210  **0x1 解包boot.img**  提取内核什么的就直接跳过，网上有很多资料都是可以直接用的，去官网下包或者有root的dd提取都可以。  首先先大概了解一下安卓内核  比较重要的几个分区如下：  1</div></div></div></a><a class="pagination-related" href="/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/" title="从规则到偏好——用强化学习做游戏直播AI切片"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-29</div><div class="info-item-2">从规则到偏好——用强化学习做游戏直播AI切片</div></div><div class="info-2"><div class="info-item-1">本文记录了一套游戏直播自动切片系统的完整设计与实战过程。系统以三角洲行动FPS直播为场景，通过语音转写+画面OCR+弹幕联合分析自动识别高光时刻，并引入基于成对偏好学习的强化学习模型替代传统硬编码规则，使切片策略随用户标注逐步优化。</div></div></div></a><a class="pagination-related" href="/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/" title="AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-04-29</div><div class="info-item-2">AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本</div></div><div class="info-2"><div class="info-item-1">## AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本  ### 1. 引言  本文记录了一次完整的安卓 ELF（.so）外挂样本逆向分析过程。样本是一个面向某 UE4 射击游戏的游戏作弊模块，基于 Unreal Engine 4 引擎开发。 传统逆向工程依赖人工阅读反汇编代码、逐条追踪指令流，分析周期通常以天甚至周计。本文展示如何利用 **AI 辅助逆向** 工作</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER<br>qq:2132152966</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%A1%B9%E7%9B%AE%E6%A6%82%E8%BF%B0"><span class="toc-number">1.</span> <span class="toc-text">项目概述</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BD%BF%E7%94%A8%E6%96%B9%E6%B3%95"><span class="toc-number">2.</span> <span class="toc-text">使用方法</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%AE%89%E8%A3%85"><span class="toc-number">2.1.</span> <span class="toc-text">安装</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%B3%BB%E7%BB%9F%E4%BE%9D%E8%B5%96"><span class="toc-number">2.2.</span> <span class="toc-text">系统依赖</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%91%BD%E4%BB%A4%E8%A1%8C"><span class="toc-number">2.3.</span> <span class="toc-text">命令行</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E8%87%AA%E5%8A%A8%E7%9B%91%E5%90%AC%E6%A8%A1%E5%BC%8F"><span class="toc-number">2.4.</span> <span class="toc-text">自动监听模式</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%A1%B9%E7%9B%AE%E6%9E%B6%E6%9E%84"><span class="toc-number">3.</span> <span class="toc-text">项目架构</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%95%B0%E6%8D%AE%E6%B5%81"><span class="toc-number">3.1.</span> <span class="toc-text">数据流</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%A0%B8%E5%BF%83%E8%AE%BE%E8%AE%A1"><span class="toc-number">3.2.</span> <span class="toc-text">核心设计</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#1-%E5%8F%8C%E5%8D%8F%E7%A8%8B%E5%B9%B6%E5%8F%91%E6%9E%B6%E6%9E%84"><span class="toc-number">3.2.1.</span> <span class="toc-text">1. 双协程并发架构</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2-%E6%97%B6%E9%97%B4%E5%90%8C%E6%AD%A5%E6%9C%BA%E5%88%B6"><span class="toc-number">3.2.2.</span> <span class="toc-text">2. 时间同步机制</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3-%E6%B5%81%E5%9C%B0%E5%9D%80%E6%8F%90%E5%8F%96-%E2%80%94-%E4%B8%A4%E5%B1%82%E7%AD%96%E7%95%A5"><span class="toc-number">3.2.3.</span> <span class="toc-text">3. 流地址提取 — 两层策略</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#4-%E5%BC%B9%E5%B9%95-WebSocket-%E5%8D%8F%E8%AE%AE"><span class="toc-number">3.2.4.</span> <span class="toc-text">4. 弹幕 WebSocket 协议</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#5-%E6%89%8B%E5%8A%A8-Protobuf-%E8%A7%A3%E6%9E%90%E5%99%A8"><span class="toc-number">3.2.5.</span> <span class="toc-text">5. 手动 Protobuf 解析器</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-X-Bogus-%E7%AD%BE%E5%90%8D-%E2%80%94-%E7%BA%AF-Python-%E5%AE%9E%E7%8E%B0"><span class="toc-number">3.2.6.</span> <span class="toc-text">6. X-Bogus 签名 — 纯 Python 实现</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#7-%E4%BC%98%E9%9B%85%E5%85%B3%E9%97%AD"><span class="toc-number">3.2.7.</span> <span class="toc-text">7. 优雅关闭</span></a></li></ol></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8A%80%E6%9C%AF%E6%A0%88"><span class="toc-number">4.</span> <span class="toc-text">技术栈</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8A%80%E6%9C%AF%E9%9A%BE%E7%82%B9%E4%B8%8E%E8%A7%A3%E5%86%B3%E6%96%B9%E6%A1%88"><span class="toc-number">5.</span> <span class="toc-text">技术难点与解决方案</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-Protobuf-%E5%AD%97%E6%AE%B5%E5%8F%B7%E9%80%86%E5%90%91"><span class="toc-number">5.1.</span> <span class="toc-text">1. Protobuf 字段号逆向</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-Ctrl-C-%E6%97%A0%E6%B3%95%E5%81%9C%E6%AD%A2%E5%BD%95%E5%88%B6"><span class="toc-number">5.2.</span> <span class="toc-text">2. Ctrl+C 无法停止录制</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-WebSocket-%E8%BF%9E%E6%8E%A5%E6%88%90%E5%8A%9F%E4%BD%86%E6%97%A0%E6%95%B0%E6%8D%AE%E6%8E%A8%E9%80%81"><span class="toc-number">5.3.</span> <span class="toc-text">3. WebSocket 连接成功但无数据推送</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-%E6%97%B6%E5%8C%BA%E9%97%AE%E9%A2%98"><span class="toc-number">5.4.</span> <span class="toc-text">4. 时区问题</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原">DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E9%9B%B6%E6%90%AD%E5%BB%BA%E4%B8%80%E4%B8%AA%E6%8A%80%E6%9C%AF%E5%8D%9A%E5%AE%A2%E2%80%94%E2%80%94Hexo-Butterfly%E4%B8%BB%E9%A2%98%E6%B7%B1%E5%BA%A6%E5%AE%9A%E5%88%B6%E5%AE%9E%E5%BD%95/" title="从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录">从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录</a><time datetime="2026-05-29T14:00:00.000Z" title="发表于 2026-05-29 22:00:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/" title="从规则到偏好——用强化学习做游戏直播AI切片">从规则到偏好——用强化学习做游戏直播AI切片</a><time datetime="2026-05-29T07:30:00.000Z" title="发表于 2026-05-29 15:30:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</a><time datetime="2026-05-25T04:00:00.000Z" title="发表于 2026-05-25 12:00:00">2026-05-25</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档">斗鱼直播 AI 分析系统 — 项目文档</a><time datetime="2026-05-25T02:40:00.000Z" title="发表于 2026-05-25 10:40:00">2026-05-25</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

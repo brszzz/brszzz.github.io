@@ -1,0 +1,271 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>注入so后隐藏maps里的so名，规避部分maps扫描检测 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="**0x00 前情提要**最近研究学习了安卓的一些linker机制和注入方法，想到目前厂商会在proc&#x2F;xxxx&#x2F;maps里检测特征的so名，而注入时，ptrace附加到进程-&gt;远程调用mmaps申请匿名内存段-&gt;把文件复制到内存中-&gt;远程调用dlopen加载在内存中的so，这个过程中不管fd是不是0都会在maps中显示so的路径（这点还没明白是为什么，按我的理解他dlopen加载的应该是内存中的">
+<meta property="og:type" content="article">
+<meta property="og:title" content="注入so后隐藏maps里的so名，规避部分maps扫描检测">
+<meta property="og:url" content="https://brszzz.github.io/2025/01/01/52pojie-1911640-%E6%B3%A8%E5%85%A5so%E5%90%8E%E9%9A%90%E8%97%8Fmaps%E9%87%8C%E7%9A%84so%E5%90%8D%E8%A7%84%E9%81%BF%E9%83%A8%E5%88%86maps%E6%89%AB%E6%8F%8F%E6%A3%80%E6%B5%8B/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="**0x00 前情提要**最近研究学习了安卓的一些linker机制和注入方法，想到目前厂商会在proc&#x2F;xxxx&#x2F;maps里检测特征的so名，而注入时，ptrace附加到进程-&gt;远程调用mmaps申请匿名内存段-&gt;把文件复制到内存中-&gt;远程调用dlopen加载在内存中的so，这个过程中不管fd是不是0都会在maps中显示so的路径（这点还没明白是为什么，按我的理解他dlopen加载的应该是内存中的">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2024-12-31T16:00:00.000Z">
+<meta property="article:modified_time" content="2026-06-21T15:49:40.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="Frida">
+<meta property="article:tag" content="Linux内核">
+<meta property="article:tag" content="Ptrace">
+<meta property="article:tag" content="内存管理">
+<meta property="article:tag" content="注入技术">
+<meta property="article:tag" content="脱壳">
+<meta property="article:tag" content="虚拟机">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "注入so后隐藏maps里的so名，规避部分maps扫描检测",
+  "url": "https://brszzz.github.io/2025/01/01/52pojie-1911640-%E6%B3%A8%E5%85%A5so%E5%90%8E%E9%9A%90%E8%97%8Fmaps%E9%87%8C%E7%9A%84so%E5%90%8D%E8%A7%84%E9%81%BF%E9%83%A8%E5%88%86maps%E6%89%AB%E6%8F%8F%E6%A3%80%E6%B5%8B/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2024-12-31T16:00:00.000Z",
+  "dateModified": "2026-06-21T15:49:40.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2025/01/01/52pojie-1911640-%E6%B3%A8%E5%85%A5so%E5%90%8E%E9%9A%90%E8%97%8Fmaps%E9%87%8C%E7%9A%84so%E5%90%8D%E8%A7%84%E9%81%BF%E9%83%A8%E5%88%86maps%E6%89%AB%E6%8F%8F%E6%A3%80%E6%B5%8B/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '注入so后隐藏maps里的so名，规避部分maps扫描检测',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">注入so后隐藏maps里的so名，规避部分maps扫描检测</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">注入so后隐藏maps里的so名，规避部分maps扫描检测</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-12-31T16:00:00.000Z" title="发表于 2025-01-01 00:00:00">2025-01-01</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-21T15:49:40.000Z" title="更新于 2026-06-21 23:49:40">2026-06-21</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">23k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>1:25分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h3 id="0x00-前情提要"><a href="#0x00-前情提要" class="headerlink" title="0x00 前情提要"></a>0x00 前情提要</h3><p>最近研究学习了安卓的一些linker机制和注入方法，想到目前厂商会在proc&#x2F;xxxx&#x2F;maps里检测特征的so名，而注入时，ptrace附加到进程-&gt;远程调用mmaps申请匿名内存段-&gt;把文件复制到内存中-&gt;远程调用dlopen加载在内存中的so，这个过程中不管fd是不是0都会在maps中显示so的路径（这点还没明白是为什么，按我的理解他dlopen加载的应该是内存中的elf，理论上来说不应该有名字，有大佬的话可以解释一下）。然后就想着能不能把maps中so的名字给去掉，在网上查阅了一些资料，此篇仅作为学习记录。</p>
+<h3 id="0x01-maps简要介绍"><a href="#0x01-maps简要介绍" class="headerlink" title="0x01 maps简要介绍"></a>0x01 maps简要介绍</h3><p>在Linux中将进程虚拟空间中的一个段叫做虚拟内存区域VMA（Virtual Memory Area)。</p>
+<p>VMA对应ELF文件中的segment。</p>
+<p>ELF文件有section和segment的概念。</p>
+<p>从链接的角度看，ELF是按照section存储的，事实也的确如此；从装载的角度看，ELF文件又按照segment进行划分，这是为了防止按照section装载时造成的内部碎片。</p>
+<p>segment相当于是将多个属性（读写执行）相同的section合并在一起进行。program headers 存放segment的信息;section table存放section的信息.maps中每一个对应的项如下</p>
+<p><img src="https://attach.52pojie.cn/forum/202404/09/161059mdkx4303hdx4kzxt.png"></p>
+<p>其中主要关注vm_flags和映射文件名</p>
+<p>我是基于这个github项目的基础上添加的功能</p>
+<blockquote>
+<p><a target="_blank" rel="noopener" href="https://github.com/SsageParuders/AndroidPtraceInject">https://github.com/SsageParuders/AndroidPtraceInject</a></p>
+</blockquote>
+<p>原项目直接注入的话会有注入路径名的特征</p>
+<p><img src="https://attach.52pojie.cn/forum/202404/09/162229pr1ts1qrz67p75qs.png"></p>
+<p><img src="https://attach.52pojie.cn/forum/202404/09/162419p73pjpp7jo77lyp7.png"></p>
+<h3 id="0x02-如何实现隐藏内存段名"><a href="#0x02-如何实现隐藏内存段名" class="headerlink" title="0x02 如何实现隐藏内存段名"></a>0x02 如何实现隐藏内存段名</h3><p>灵感来自于之前看过的一篇帖子，帖子里讲的是有个应用做了一个操作，用dlopen加载so后，mmap一块新内存，把加载后的so内存memmove复制过去，然后mremap把原地址映射到新地址，这样maps里就没有这个so的信息了，能在一定程度上防止别人dump这个so（虽然好像现在来看没什么用）</p>
+<p>mmove和mmap的函数原型如下</p>
+<p>#define_GNU_SOURCE</p>
+<p>#include&lt;unistd.h&gt;</p>
+<p>#include&lt;sys&#x2F;mman.h&gt;</p>
+<p>void * mremap(void <em>old_address, size_t old_size , size_t new_size, int flags…&#x2F;</em> void *new_address *&#x2F;);  &#x2F;&#x2F;扩大&#x2F;缩小现有内存映射，flags参数还可以控制是否需要页对齐</p>
+<p>old_address：旧地址已经被page aligned页对齐</p>
+<p>old_sixe：VMB虚拟内存块的大小</p>
+<p>new_size：mremap操作后需要的VMB大小</p>
+<p>flags：</p>
+<p>MREMAP_MAYMOVE :允许内核将映射重定位到新的虚拟地址| MREMAP_FIXED:接受第五个参数void *new_address，该参数指映射必须移动到页面对齐地址page_align。在new_address和new_size指定的地址范围内的所有先前映射都不会被映射。如果指定了MREMAP_FIXED，还必须指定MREMAP_MAYMOVE</p>
+<p>void * memmove(new_Address, old_Address, size); &#x2F;&#x2F; </p>
+<p>new_Address:新地址 </p>
+<p>old_Address:原地址, </p>
+<p>size：大小</p>
+<p>1.首先还是按照正常步骤注入so，ptrace附加到进程-&gt;远程调用mmaps申请匿名内存段-&gt;把文件复制到内存中-&gt;远程调用dlopen加载在内存中的so。</p>
+<p>2.然后在maps里搜索含有指定so的名称</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br></pre></td><td class="code"><pre><span class="line">ProcMapInfo *<span class="title function_">ListModulesWithName</span><span class="params">(<span class="type">char</span> *name, <span class="type">int</span> pid)</span></span><br><span class="line"></span><br><span class="line">&#123;</span><br><span class="line"></span><br><span class="line"> <span class="type">static</span> ProcMapInfo returnVal[<span class="number">3</span>];</span><br><span class="line"></span><br><span class="line"> <span class="type">int</span> i = <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line"> <span class="type">char</span> buffer[<span class="number">512</span>];</span><br><span class="line"></span><br><span class="line"> <span class="type">char</span> fielPath[<span class="number">100</span>];</span><br><span class="line"></span><br><span class="line"> <span class="built_in">sprintf</span>(fielPath, <span class="string">&quot;/proc/%d/maps&quot;</span>, pid);</span><br><span class="line"></span><br><span class="line"> <span class="built_in">printf</span>(fielPath);</span><br><span class="line"></span><br><span class="line"> FILE *fp = fopen(fielPath, <span class="string">&quot;r&quot;</span>);</span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (fp != nullptr)</span><br><span class="line"></span><br><span class="line"> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">while</span> (fgets(buffer, <span class="keyword">sizeof</span>(buffer), fp))</span><br><span class="line"></span><br><span class="line"> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (<span class="built_in">strstr</span>(buffer, name))</span><br><span class="line"></span><br><span class="line"> &#123;</span><br><span class="line"></span><br><span class="line"> ProcMapInfo info&#123;&#125;;</span><br><span class="line"></span><br><span class="line"> <span class="type">char</span> perms[<span class="number">10</span>];</span><br><span class="line"></span><br><span class="line"> <span class="type">char</span> path[<span class="number">255</span>];</span><br><span class="line"></span><br><span class="line"> <span class="type">char</span> dev[<span class="number">25</span>];</span><br><span class="line"></span><br><span class="line"> <span class="built_in">sscanf</span>(buffer, <span class="string">&quot;%lx-%lx %s %ld %s %ld %s&quot;</span>, &amp;info.start, &amp;info.end, perms, &amp;info.offset, dev, &amp;info.inode, path);</span><br><span class="line"></span><br><span class="line"> <span class="comment">// Process Perms</span></span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (<span class="built_in">strchr</span>(perms, <span class="string">&#x27;r&#x27;</span>))</span><br><span class="line"></span><br><span class="line"> info.perms |= PROT_READ;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (<span class="built_in">strchr</span>(perms, <span class="string">&#x27;w&#x27;</span>))</span><br><span class="line"></span><br><span class="line"> info.perms |= PROT_WRITE;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (<span class="built_in">strchr</span>(perms, <span class="string">&#x27;x&#x27;</span>))</span><br><span class="line"></span><br><span class="line"> info.perms |= PROT_EXEC;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (<span class="built_in">strchr</span>(perms, <span class="string">&#x27;r&#x27;</span>))</span><br><span class="line"></span><br><span class="line"> info.perms |= PROT_READ;</span><br><span class="line"></span><br><span class="line"> <span class="comment">// Set all other information</span></span><br><span class="line"></span><br><span class="line"> info.dev = dev;</span><br><span class="line"></span><br><span class="line"> info.path = path;</span><br><span class="line"></span><br><span class="line"> <span class="built_in">printf</span>(<span class="string">&quot;Line: %s&quot;</span>, buffer);</span><br><span class="line"></span><br><span class="line"> returnVal[i] = info;</span><br><span class="line"></span><br><span class="line"> <span class="comment">// printf(&quot;start:%lx-end:%lx&quot;, returnVal[i].start, returnVal[i].end);</span></span><br><span class="line"></span><br><span class="line"> i++;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">return</span> returnVal;</span><br><span class="line"></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这样就能获取到注入后so的内存区域地址，当然也可以在远程调用注入的时候用返回的指针获取分配的地址</p>
+<p>3.然后就是再分配一块内存，把原内存的内容复制过去，再用remap扩展过去</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br><span class="line">111</span><br><span class="line">112</span><br><span class="line">113</span><br><span class="line">114</span><br><span class="line">115</span><br><span class="line">116</span><br><span class="line">117</span><br><span class="line">118</span><br><span class="line">119</span><br><span class="line">120</span><br><span class="line">121</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">long</span> <span class="type">int</span> address = maps[i].start;</span><br><span class="line"></span><br><span class="line"> <span class="type">size_t</span> size = maps[i].end - maps[i].start;</span><br><span class="line"></span><br><span class="line"> <span class="comment">// printf(&quot;start:%lx-end:%lx\n&quot;, maps[i].start, maps[i].end);</span></span><br><span class="line"></span><br><span class="line"> <span class="comment">// void *map = mmap(0, size, PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">0</span>] = <span class="number">0</span>; <span class="comment">// 设置为NULL表示让系统自动选择分配内存的地址</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">1</span>] = size; <span class="comment">// 映射内存的大小</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">2</span>] = PROT_READ | PROT_WRITE | PROT_EXEC; <span class="comment">// 表示映射内存区域 可读|可写|可执行</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">3</span>] = MAP_ANONYMOUS | MAP_PRIVATE; <span class="comment">// 建立匿名映射</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">4</span>] = <span class="number">-1</span>; <span class="comment">// 若需要映射文件到内存中，则为文件的fd</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">5</span>] = <span class="number">0</span>; <span class="comment">// 文件映射偏移量</span></span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (ptrace_call(pid, (<span class="type">uintptr_t</span>)mmap_addr, parameters, <span class="number">6</span>, &amp;CurrentRegs) == <span class="number">-1</span>)</span><br><span class="line"></span><br><span class="line"> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="built_in">printf</span>(<span class="string">&quot;[-] Call Remote mmap Func Failed, err:%s\n&quot;</span>, strerror(errno));</span><br><span class="line"></span><br><span class="line"> <span class="keyword">break</span>;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> <span class="type">uintptr_t</span> newMapAddr = ptrace_getret(&amp;CurrentRegs);</span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> ((maps[i].perms &amp; PROT_READ) == <span class="number">0</span>)</span><br><span class="line"></span><br><span class="line"> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="built_in">printf</span>(<span class="string">&quot;Removing protection: %s&quot;</span>, maps[i].path);</span><br><span class="line"></span><br><span class="line"> <span class="comment">// mprotect(address, size, PROT_READ);</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">0</span>] = address; <span class="comment">// 设置为NULL表示让系统自动选择分配内存的地址</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">1</span>] = size; <span class="comment">// 映射内存的大小</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">2</span>] = PROT_READ; <span class="comment">// 表示映射内存区域 可读|可写|可执行</span></span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (ptrace_call(pid, (<span class="type">uintptr_t</span>)mprotect_addr, parameters, <span class="number">3</span>, &amp;CurrentRegs) == <span class="number">-1</span>)</span><br><span class="line"></span><br><span class="line"> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="built_in">printf</span>(<span class="string">&quot;[-] Call Remote mprotect Func Failed, err:%s\n&quot;</span>, strerror(errno));</span><br><span class="line"></span><br><span class="line"> <span class="keyword">break</span>;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> <span class="comment">// Copy to new location</span></span><br><span class="line"></span><br><span class="line"> <span class="comment">// memmove(map, address, size);</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">0</span>] = newMapAddr;</span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">1</span>] = address;</span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">2</span>] = size;</span><br><span class="line"></span><br><span class="line"> </span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (ptrace_call(pid, (<span class="type">uintptr_t</span>)memmove_addr, parameters, <span class="number">3</span>, &amp;CurrentRegs) == <span class="number">-1</span>)</span><br><span class="line"></span><br><span class="line"> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="built_in">printf</span>(<span class="string">&quot;[-] Call Remote memmove Func Failed, err:%s\n&quot;</span>, strerror(errno));</span><br><span class="line"></span><br><span class="line"> <span class="keyword">break</span>;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> <span class="comment">// mremap(map, size, size, MREMAP_MAYMOVE | MREMAP_FIXED, maps[i].start);</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">0</span>] = newMapAddr;</span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">1</span>] = size;</span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">2</span>] = size;</span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">3</span>] = MREMAP_MAYMOVE | MREMAP_FIXED;</span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">4</span>] = maps[i].start;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (ptrace_call(pid, (<span class="type">uintptr_t</span>)mremap_addr, parameters, <span class="number">5</span>, &amp;CurrentRegs) == <span class="number">-1</span>)</span><br><span class="line"></span><br><span class="line"> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="built_in">printf</span>(<span class="string">&quot;[-] Call Remote mremap Func Failed, err:%s\n&quot;</span>, strerror(errno));</span><br><span class="line"></span><br><span class="line"> <span class="keyword">break</span>;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> <span class="comment">// Reapply protection</span></span><br><span class="line"></span><br><span class="line"> <span class="comment">// mprotect((void *)maps[i].start, size, maps[i].perms);</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">0</span>] = address; <span class="comment">// 设置为NULL表示让系统自动选择分配内存的地址</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">1</span>] = size; <span class="comment">// 映射内存的大小</span></span><br><span class="line"></span><br><span class="line"> parameters[<span class="number">2</span>] = maps[i].perms; <span class="comment">// 表示映射内存区域 可读|可写|可执行</span></span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (ptrace_call(pid, (<span class="type">uintptr_t</span>)mprotect_addr, parameters, <span class="number">3</span>, &amp;CurrentRegs) == <span class="number">-1</span>)</span><br><span class="line"></span><br><span class="line"> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="built_in">printf</span>(<span class="string">&quot;[-] Call Remote mprotect Func Failed, err:%s\n&quot;</span>, strerror(errno));</span><br><span class="line"></span><br><span class="line"> <span class="keyword">break</span>;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+
+<p>这样就完成了内存段的隐藏了，来看看效果</p>
+<p><img src="https://attach.52pojie.cn/forum/202404/09/170246rn9gz1bkmb569c5z.png"></p>
+<p><img src="https://attach.52pojie.cn/forum/202404/09/170848xe9ism28gagzaest.png"></p>
+<p>现在内存里就看不到内存段的名字了</p>
+<h3 id="0x03-后记"><a href="#0x03-后记" class="headerlink" title="0x03 后记"></a>0x03 后记</h3><p>隐藏了内存段的名字只能说规避掉一些特征检测，现在很多主流app还会检测内存里有没有可疑内存段，内存空间里虽然没了名字，但是r-xp这种代码段内存没名字本身就很可疑。发现匿名内存后，对这段内存做一些内存特征判断blablabla，也还有一堆其他的检测方法。</p>
+<p>在别的地方看到的一些过检测的方法：内核代码中修改show_map_vma函数能实现对指定内存段的读写执行权限进行修改，甚至直接把这段内存全都过滤掉（内存不连续也是可疑的）。还有用frida+seccomp监控应用调用，过滤修改对maps的读取感觉也是可行的。</p>
+<p>想要成为更好的人。</p>
+<p><strong>参考：</strong></p>
+<p><a target="_blank" rel="noopener" href="https://blog.csdn.net/weixin_41540614/article/details/111058417">https://blog.csdn.net/weixin_41540614/article/details/111058417</a></p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2025/01/01/52pojie-1911640-%E6%B3%A8%E5%85%A5so%E5%90%8E%E9%9A%90%E8%97%8Fmaps%E9%87%8C%E7%9A%84so%E5%90%8D%E8%A7%84%E9%81%BF%E9%83%A8%E5%88%86maps%E6%89%AB%E6%8F%8F%E6%A3%80%E6%B5%8B/">https://brszzz.github.io/2025/01/01/52pojie-1911640-%E6%B3%A8%E5%85%A5so%E5%90%8E%E9%9A%90%E8%97%8Fmaps%E9%87%8C%E7%9A%84so%E5%90%8D%E8%A7%84%E9%81%BF%E9%83%A8%E5%88%86maps%E6%89%AB%E6%8F%8F%E6%A3%80%E6%B5%8B/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Frida/">Frida</a><a class="post-meta__tags" href="/tags/Linux%E5%86%85%E6%A0%B8/">Linux内核</a><a class="post-meta__tags" href="/tags/Ptrace/">Ptrace</a><a class="post-meta__tags" href="/tags/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/">内存管理</a><a class="post-meta__tags" href="/tags/%E6%B3%A8%E5%85%A5%E6%8A%80%E6%9C%AF/">注入技术</a><a class="post-meta__tags" href="/tags/%E8%84%B1%E5%A3%B3/">脱壳</a><a class="post-meta__tags" href="/tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/">虚拟机</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2025/01/01/52pojie-1922560-%E5%AE%89%E5%8D%93%E8%99%9A%E8%A1%A8hook%E7%9A%84%E7%AE%80%E5%8D%95%E5%AE%9E%E7%8E%B0/" title="安卓虚表hook的简单实现"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">安卓虚表hook的简单实现</div></div><div class="info-2"><div class="info-item-1">**0x0 虚表的简单介绍**  虚表（Virtual Table）是一种在面向对象编程中常见的概念，特别是在使用C++等支持多态性（Polymorphism）的编程语言中。它是一种数据结构，用于实现类的动态绑定（Dynamic Binding）和多态性。在C++中，虚表通常与虚函数（Virtual Function）一起使用。在具有继承关系的类中，当一个基类指针或引用指向一个派生类对象时，如果</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1792775-%E5%9F%BA%E4%BA%8E%E8%87%AA%E5%8A%A8%E5%8C%96%E5%B7%A5%E5%85%B7autoxjs%E7%9A%84%E6%8A%A2%E7%A5%A8/" title="基于自动化工具autoxjs的抢票"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">基于自动化工具autoxjs的抢票</div></div><div class="info-2"><div class="info-item-1">**0x00 前情提要**  之前看到有大佬发了某麦网的apk加密接口分析那篇帖子，其中提到了用自动化工具开发出来的效果不太好，但是感觉自动化的不应该这么慢，于是尝试用autoxjs实现一个基于自动化的抢票工具，之前还用这个做过一个定时打卡的脚本，有需要的话我也可以分享一下。  **0x01 环境**  windows 10一加真机，Android11x麦apk 版本8.5.4adb 33.</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2025/01/01/52pojie-1951947-%E5%AE%89%E5%8D%93%E6%9F%90%E6%B3%A8%E5%85%A5%E7%B1%BB%E5%A4%96%E6%8C%82%E8%84%B1%E5%A3%B3%E5%92%8C%E5%8A%9F%E8%83%BD%E5%88%86%E6%9E%90%E4%B8%8A/" title="安卓某注入类外挂脱壳和功能分析—上"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">安卓某注入类外挂脱壳和功能分析—上</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  今天看到了一个某手游的注入类外挂样本，目标是[脱壳](https://www.52pojie.cn/forum-5-1.html)和加密流程的分析，以及分析出外挂实现功能修改的地方，此篇仅作为学习记录。  **0x1 GZIP加密**  首先，这个样本本体是一个500kb的sh文件，拖到ida里提示是二进制文件。于是用everedit打开这个文件看一眼，发现开头有这个</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1952349-%E5%AE%89%E5%8D%93%E6%9F%90%E6%B3%A8%E5%85%A5%E7%B1%BB%E5%A4%96%E6%8C%82%E8%84%B1%E5%A3%B3%E5%92%8C%E5%8A%9F%E8%83%BD%E5%88%86%E6%9E%90%E4%B8%8B/" title="安卓某注入类外挂脱壳和功能分析—下"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">安卓某注入类外挂脱壳和功能分析—下</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  目前已经定位到动态库了，现在就来看看里面的功能逻辑是咋写的，这个环节的话其实跟reverse感觉关系已经不大了，更多的是需要对UE4引擎的理解。今天花了点时间，结合dump的游戏SDK、libUE4,把这个文件里的一些函数和变量名给还原了出来。  **0x1 找到入口函数**  1.首先是要定位到它的入口函数，一般来说动态库会用__attribute__((const</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1970445-%E6%9F%90%E5%86%85%E6%B5%8B%E4%B8%AD%E6%8B%B3%E5%A4%B4%E5%85%AC%E5%8F%B8%E7%9A%84fps%E6%89%8B%E6%B8%B8GName%E7%AE%97%E6%B3%95%E9%80%86%E5%90%91/" title="某内测中拳头公司的fps手游GName算法逆向"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">某内测中拳头公司的fps手游GName算法逆向</div></div><div class="info-2"><div class="info-item-1">**0x0 序言**  前段时间研究了一下某游戏的GName算法，水一篇文章记录一下，以下简称该游戏为C手游。  **0x1 静态分析**  首先先dump并修复libUE4.so，拖进ida看一下。ida解析完成后，搜ByteProperty，找到引用的函数。  ![](https://attach.52pojie.cn/forum/202410/08/113834y9dsxodyjo5q</div></div></div></a><a class="pagination-related" href="/2024/12/13/52pojie-1991042-%E5%8D%95%E7%8B%AC%E7%BC%96%E8%AF%91%E5%AE%89%E5%8D%93%E5%86%85%E6%A0%B8%E6%96%AD%E7%82%B9%E6%A8%A1%E5%9D%97rwProcMem33%E7%9A%84hwBreakPointProcMoudle/" title="单独编译安卓内核断点模块(rwProcMem33的hwBreakPointProcMoudle)"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-12-13</div><div class="info-item-2">单独编译安卓内核断点模块(rwProcMem33的hwBreakPointProcMoudle)</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  前段时间在研究安卓的硬件断点实现和原理，本来是想尝试移植到aptach的kpm，但是尝试后发现需要补的结构太多了，有的结构不补只有前向声明的话好像也有问题，比如说用register_user_hw_breakpoint注册的断点后用户层会直接卡死，内核层正常运行。结果补来补去最后发现还不如直接用内核源码去编译ko，遂决定先用着原版的那个内核断点模块。这篇文章记录一下编译的</div></div></div></a><a class="pagination-related" href="/2024/11/01/52pojie-1977664-KernelPatchModule%E5%BC%80%E5%8F%91%E5%AD%A6%E4%B9%A0-%E7%BC%96%E8%AF%91kpm%E5%A6%82%E4%BD%95%E8%BF%9B%E8%A1%8C%E5%86%85%E6%A0%B8hook/" title="KernelPatchModule开发学习-编译kpm、如何进行内核hook"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-11-01</div><div class="info-item-2">KernelPatchModule开发学习-编译kpm、如何进行内核hook</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  随着安卓逆向研究已经开始进入内核时代，现在内核相关的开发软件和资料也是越来越多。最近发现apatch的kpm挺好用的，不依赖内核源码，编译也很方便，还有现成的几种内核hook方式。但是在学习的过程中发现目前相关资料还是比较少，于是想用文章记录一下自己的学习过程。  **0x1 ****简介、****环境**  什么是KernelPatchModule？  官网的简</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1970754-dump%E7%BD%91%E6%98%93%E5%8A%A0%E5%9B%BA%E7%9A%84libUE4so/" title="dump网易加固的libUE4.so"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">dump网易加固的libUE4.so</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  刚好最近有空，顺便再记录一下之前一次dump莉莉丝的farlight84 libUE4遇到的问题，他本来用的tx的安全，后面不知道为啥换成网易的。  **0x1 dump libUE4.so**  他这个so本身也是有加密的，需要dump加载解密后的libUE4.so，首先用ue4dumper尝试dump一下，结果发现提示不是elf文件。  ![](https://a</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER<br>qq:2132152966</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-3"><a class="toc-link" href="#0x00-%E5%89%8D%E6%83%85%E6%8F%90%E8%A6%81"><span class="toc-number">1.</span> <span class="toc-text">0x00 前情提要</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#0x01-maps%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D"><span class="toc-number">2.</span> <span class="toc-text">0x01 maps简要介绍</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#0x02-%E5%A6%82%E4%BD%95%E5%AE%9E%E7%8E%B0%E9%9A%90%E8%97%8F%E5%86%85%E5%AD%98%E6%AE%B5%E5%90%8D"><span class="toc-number">3.</span> <span class="toc-text">0x02 如何实现隐藏内存段名</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#0x03-%E5%90%8E%E8%AE%B0"><span class="toc-number">4.</span> <span class="toc-text">0x03 后记</span></a></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原">DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E9%9B%B6%E6%90%AD%E5%BB%BA%E4%B8%80%E4%B8%AA%E6%8A%80%E6%9C%AF%E5%8D%9A%E5%AE%A2%E2%80%94%E2%80%94Hexo-Butterfly%E4%B8%BB%E9%A2%98%E6%B7%B1%E5%BA%A6%E5%AE%9A%E5%88%B6%E5%AE%9E%E5%BD%95/" title="从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录">从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录</a><time datetime="2026-05-29T14:00:00.000Z" title="发表于 2026-05-29 22:00:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/" title="从规则到偏好——用强化学习做游戏直播AI切片">从规则到偏好——用强化学习做游戏直播AI切片</a><time datetime="2026-05-29T07:30:00.000Z" title="发表于 2026-05-29 15:30:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</a><time datetime="2026-05-25T04:00:00.000Z" title="发表于 2026-05-25 12:00:00">2026-05-25</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档">斗鱼直播 AI 分析系统 — 项目文档</a><time datetime="2026-05-25T02:40:00.000Z" title="发表于 2026-05-25 10:40:00">2026-05-25</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

@@ -1,0 +1,544 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>从规则到偏好——用强化学习做游戏直播AI切片 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="本文记录了一套游戏直播自动切片系统的完整设计与实战过程。系统以三角洲行动FPS直播为场景，通过语音转写+画面OCR+弹幕联合分析自动识别高光时刻，并引入基于成对偏好学习的强化学习模型替代传统硬编码规则，使切片策略随用户标注逐步优化。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="从规则到偏好——用强化学习做游戏直播AI切片">
+<meta property="og:url" content="https://brszzz.github.io/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="本文记录了一套游戏直播自动切片系统的完整设计与实战过程。系统以三角洲行动FPS直播为场景，通过语音转写+画面OCR+弹幕联合分析自动识别高光时刻，并引入基于成对偏好学习的强化学习模型替代传统硬编码规则，使切片策略随用户标注逐步优化。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2026-05-29T07:30:00.000Z">
+<meta property="article:modified_time" content="2026-06-21T15:49:40.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="Python">
+<meta property="article:tag" content="AI分析">
+<meta property="article:tag" content="弹幕分析">
+<meta property="article:tag" content="强化学习">
+<meta property="article:tag" content="偏好学习">
+<meta property="article:tag" content="语音转写">
+<meta property="article:tag" content="OCR">
+<meta property="article:tag" content="视频切割">
+<meta property="article:tag" content="faster-whisper">
+<meta property="article:tag" content="PaddleOCR">
+<meta property="article:tag" content="scikit-learn">
+<meta property="article:tag" content="ffmpeg">
+<meta property="article:tag" content="GPU加速">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "从规则到偏好——用强化学习做游戏直播AI切片",
+  "url": "https://brszzz.github.io/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2026-05-29T07:30:00.000Z",
+  "dateModified": "2026-06-21T15:49:40.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '从规则到偏好——用强化学习做游戏直播AI切片',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">从规则到偏好——用强化学习做游戏直播AI切片</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">从规则到偏好——用强化学习做游戏直播AI切片</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-05-29T07:30:00.000Z" title="发表于 2026-05-29 15:30:00">2026-05-29</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-21T15:49:40.000Z" title="更新于 2026-06-21 23:49:40">2026-06-21</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/AI%E5%BA%94%E7%94%A8/">AI应用</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">34k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>2:02分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="三角洲行动直播切片-AI-系统-—-项目文档"><a href="#三角洲行动直播切片-AI-系统-—-项目文档" class="headerlink" title="三角洲行动直播切片 AI 系统 — 项目文档"></a>三角洲行动直播切片 AI 系统 — 项目文档</h1><h2 id="一、项目简介"><a href="#一、项目简介" class="headerlink" title="一、项目简介"></a>一、项目简介</h2><p>本项目是一个<strong>游戏直播自动切片系统</strong>，针对「三角洲行动」等 FPS 游戏直播，通过语音转写 + 画面 OCR + 弹幕联合分析自动识别高光时刻，并使用强化学习（偏好学习）逐步学习用户切片偏好，最终输出可直接发布的短视频片段。</p>
+<h3 id="核心功能"><a href="#核心功能" class="headerlink" title="核心功能"></a>核心功能</h3><ol>
+<li><strong>语音转写</strong> — 从 FLV 视频提取音频，通过 faster-whisper 将主播语音转为带时间戳的文本，并做情绪&#x2F;语速&#x2F;音量分析</li>
+<li><strong>弹幕分析</strong> — 解析抖音弹幕 JSON 数据，计算密度曲线、检测峰值、提取关键词和高频词</li>
+<li><strong>画面 OCR</strong> — GPU 硬件解码视频帧，PaddleOCR 识别击杀信息和比分面板，精确到秒级定位击杀时刻</li>
+<li><strong>多模态联合分析</strong> — 语音情绪 + 弹幕密度 + OCR 事件三流融合，自动生成候选切片并评分</li>
+<li><strong>RL 偏好学习</strong> — 用成对偏好学习替代硬编码规则评分，每次用户标注最佳切片后模型自动训练改进</li>
+<li><strong>双模式切割</strong> — 同时生成长切片（15-150s，全类型高光）和短切片（&lt;30s，仅 PvP 击杀真人）</li>
+</ol>
+<h3 id="工作流程"><a href="#工作流程" class="headerlink" title="工作流程"></a>工作流程</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">FLV 视频 ──→ ffmpeg 提取音频 ──→ faster-whisper 转写 ──→ 带时间戳文本 + 情绪标注</span><br><span class="line">    │                                                              │</span><br><span class="line">    ├──→ ffmpeg NVDEC 取帧 ──→ PaddleOCR 击杀检测 ──→ 击杀事件列表 │</span><br><span class="line">    │                                                              │</span><br><span class="line">JSON 弹幕 ──→ 时间归一化 ──→ 密度/峰值/关键词/高频词分析            │</span><br><span class="line">                                                                    │</span><br><span class="line">                    ┌───────────────────────────────────────────────┘</span><br><span class="line">                    ▼</span><br><span class="line">           事件推断 → 锚点聚类 → 候选生成 → 去重合并</span><br><span class="line">                    │</span><br><span class="line">                    ▼</span><br><span class="line">          RL 模型评分 (35 维特征 → 0-10 评分)</span><br><span class="line">          ┌─ Warm Start：合成数据拟合规则系统</span><br><span class="line">          └─ 在线学习：用户标注 → 成对偏好训练</span><br><span class="line">                    │</span><br><span class="line">                    ▼</span><br><span class="line">           人工确认 → ffmpeg NVENC GPU 切割 → 视频片段输出</span><br></pre></td></tr></table></figure>
+
+<hr>
+<h2 id="二、开发过程"><a href="#二、开发过程" class="headerlink" title="二、开发过程"></a>二、开发过程</h2><h3 id="2-1-项目起点"><a href="#2-1-项目起点" class="headerlink" title="2.1 项目起点"></a>2.1 项目起点</h3><p>项目起步于原版 <code>delta-force-clip</code> skill，使用<strong>硬编码规则</strong>评分——手工设置每个特征的加减分值（”弹幕密度 &gt; 3x 基线 +2 分，出现击杀事件 +3 分”）。规则系统可以产出及格的切片（约 70% 可用率），但存在两个问题：</p>
+<ul>
+<li>不同剪辑师的偏好差异大，规则无法适应</li>
+<li>调整评分逻辑需要直接修改 Python 源码，门槛高</li>
+</ul>
+<p>RL 版的目标是将评分替换为可学习的偏好模型，让用户通过标注行为而非修改代码来定制切片策略。</p>
+<h3 id="2-2-迭代过程"><a href="#2-2-迭代过程" class="headerlink" title="2.2 迭代过程"></a>2.2 迭代过程</h3><p><strong>Phase 1 — 规则系统基线</strong></p>
+<ul>
+<li>实现完整的多模态分析 pipeline：语音转写 → 弹幕分析 → 画面 OCR → 事件推断 → 候选生成 → 评分 → 切割</li>
+<li>事件推断：从语音中检测击杀&#x2F;死亡&#x2F;灭队&#x2F;救援，从 OCR 中检测击杀&#x2F;对局结束</li>
+<li>锚点聚类：基于时间窗口合并邻近事件，生成候选片段</li>
+<li>硬编码评分：<code>score_candidate()</code> 按特征加减分，输出 0-10 分</li>
+<li>GPU 加速：ffmpeg NVENC&#x2F;NVDEC 硬件编解码，PaddleOCR GPU 推理</li>
+</ul>
+<p><strong>Phase 2 — RL 模型设计</strong></p>
+<ul>
+<li>设计 35 维特征向量（弹幕密度 4 + 弹幕内容 4 + 高频词 4 + 语音情绪 5 + 游戏事件 8 + OCR 事件 4 + 叙事结构 3 + 位置 1 + 其他 2）</li>
+<li>实现 <code>FeatureExtractor</code>：从候选片段提取固定长度特征</li>
+<li>实现 <code>PairwisePreferenceLearner</code>：基于 LogisticRegression 的成对偏好学习器</li>
+<li>数据增强：每个正对 (A-B, 1) 生成负对 (B-A, 0)，保证二分类信号</li>
+</ul>
+<p><strong>Phase 3 — Warm Start 合成数据初始化</strong></p>
+<ul>
+<li>生成 3000 个随机特征向量，用经验分布模拟真实数据</li>
+<li>用原规则系统为每个样本计算伪评分，Linear Regression 拟合 → 得到近似规则的初始权重</li>
+<li>OCR 特征 ×2.5、高频词特征 ×2.0 显式增强（画面客观证据 + 弹幕话题信号）</li>
+</ul>
+<p><strong>Phase 4 — 反馈收集与训练</strong></p>
+<ul>
+<li>实现 <code>FeedbackStore</code>：JSONL 持久化 + <code>.npz</code> 特征向量缓存</li>
+<li>每次标注自动生成 N×(M-N) 个训练对</li>
+<li>增量训练：用 <code>partial_fit</code> + 高样本权重加速适应新反馈</li>
+<li><code>--feedback</code> 交互式标注、<code>--retrain</code> 批量重训练、<code>--reset-model</code> 回退</li>
+</ul>
+<p><strong>Phase 5 — 实际使用迭代</strong></p>
+<ul>
+<li>第一版：自动分析 25 个候选 → 用户手工筛选 12 个 + 后补对局结算</li>
+<li>反馈训练：11 个选中 vs 14 个未选中 → 9 个成对比较 → 权重更新</li>
+<li>关键发现：用户舍弃了所有弹幕高潮&#x2F;纯搞笑类片段，偏好纯击杀内容</li>
+<li>弹幕关键词词典评估：好评词&#x2F;笑声词权重下降，灭队&#x2F;对局结束权重上升</li>
+</ul>
+<hr>
+<h2 id="三、技术栈"><a href="#三、技术栈" class="headerlink" title="三、技术栈"></a>三、技术栈</h2><table>
+<thead>
+<tr>
+<th>层级</th>
+<th>技术</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>语言</strong></td>
+<td>Python 3.10+</td>
+<td>全部代码</td>
+</tr>
+<tr>
+<td><strong>语音转写</strong></td>
+<td>faster-whisper large-v3</td>
+<td>CUDA float16 推理，中文语音→文本</td>
+</tr>
+<tr>
+<td><strong>音频处理</strong></td>
+<td>ffmpeg, soundfile, numpy</td>
+<td>音频提取、RMS 能量、语速计算</td>
+</tr>
+<tr>
+<td><strong>画面 OCR</strong></td>
+<td>PaddleOCR GPU</td>
+<td>击杀信息区域文字识别</td>
+</tr>
+<tr>
+<td><strong>视频处理</strong></td>
+<td>ffmpeg NVENC&#x2F;NVDEC</td>
+<td>GPU 硬件解码取帧 + 硬件编码切割</td>
+</tr>
+<tr>
+<td><strong>机器学习</strong></td>
+<td>scikit-learn LogisticRegression</td>
+<td>成对偏好学习分类器</td>
+</tr>
+<tr>
+<td><strong>序列化</strong></td>
+<td>joblib, numpy .npz</td>
+<td>模型权重持久化 + 特征向量缓存</td>
+</tr>
+<tr>
+<td><strong>弹幕协议</strong></td>
+<td>JSON (抖音格式)</td>
+<td><code>events[].content</code> 聊天消息解析</td>
+</tr>
+<tr>
+<td><strong>数据格式</strong></td>
+<td>JSON (转录&#x2F;分析&#x2F;切割信息), JSONL (反馈历史)</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>分词</strong></td>
+<td>jieba (可选)</td>
+<td>弹幕中文分词，不可用时回退字符 n-gram</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="四、技术实现细节"><a href="#四、技术实现细节" class="headerlink" title="四、技术实现细节"></a>四、技术实现细节</h2><h3 id="4-1-音频提取与语音转录"><a href="#4-1-音频提取与语音转录" class="headerlink" title="4.1 音频提取与语音转录"></a>4.1 音频提取与语音转录</h3><p><strong>音频提取</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ffmpeg -i input.flv -ac 1 -ar 16000 -y output.wav</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><code>-ac 1</code> 单声道，<code>-ar 16000</code> 16kHz（Whisper 标准输入）</li>
+<li>输出 PCM WAV，约 256 kbps</li>
+</ul>
+<p><strong>语音转录</strong>：使用 faster-whisper large-v3 模型，CUDA + float16 推理。参数配置：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">model = WhisperModel(<span class="string">&quot;large-v3&quot;</span>, device=<span class="string">&quot;cuda&quot;</span>, compute_type=<span class="string">&quot;float16&quot;</span>)</span><br><span class="line">segments_gen, info = model.transcribe(</span><br><span class="line">    audio_path, language=<span class="string">&quot;zh&quot;</span>,</span><br><span class="line">    word_timestamps=<span class="literal">True</span>, beam_size=<span class="number">5</span>,</span><br><span class="line">    vad_filter=<span class="literal">True</span>,</span><br><span class="line">    vad_parameters=&#123;<span class="string">&quot;min_silence_duration_ms&quot;</span>: <span class="number">500</span>, <span class="string">&quot;speech_pad_ms&quot;</span>: <span class="number">400</span>&#125;,</span><br><span class="line">)</span><br></pre></td></tr></table></figure>
+
+<p>每段输出 <code>[start, end, text]</code>，转写过程中每 50 段增量保存，防止中断丢失。51 分钟音频转写耗时约 2 分钟。</p>
+<p><strong>情绪分析</strong>：</p>
+<ul>
+<li>RMS 能量：音频采样值的均方根，反映音量</li>
+<li>语速：字符数&#x2F;时长，&gt;8 chars&#x2F;s 标记快速</li>
+<li>关键词匹配：激动词（卧槽&#x2F;离谱&#x2F;啊？）、笑声词（哈哈&#x2F;笑死）</li>
+<li>音量突增：当前段 RMS &gt; 前 20 段均值 × 2</li>
+</ul>
+<h3 id="4-2-画面-OCR-击杀检测"><a href="#4-2-画面-OCR-击杀检测" class="headerlink" title="4.2 画面 OCR 击杀检测"></a>4.2 画面 OCR 击杀检测</h3><p>每 1 秒从视频截取一帧，裁剪到击杀信息区域 <code>(665, 596, 1256, 931)</code>，送入 PaddleOCR：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">ffmpeg_cmd = [</span><br><span class="line">    <span class="string">&quot;ffmpeg&quot;</span>, <span class="string">&quot;-hwaccel&quot;</span>, <span class="string">&quot;cuda&quot;</span>, <span class="string">&quot;-i&quot;</span>, video_path,</span><br><span class="line">    <span class="string">&quot;-vf&quot;</span>, <span class="string">&quot;crop=1256:931:665:596,fps=1&quot;</span>,</span><br><span class="line">    <span class="string">&quot;-f&quot;</span>, <span class="string">&quot;image2pipe&quot;</span>, <span class="string">&quot;-vcodec&quot;</span>, <span class="string">&quot;png&quot;</span>, <span class="string">&quot;-&quot;</span></span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+
+<p>检测三类事件：</p>
+<ul>
+<li><strong>PvP 击杀</strong>：匹配”淘汰”+ 玩家名模式，玩家名包含 <code>#数字</code> 标识</li>
+<li><strong>PvE 击杀</strong>：匹配 AI 敌人名称（如”护卫兵”），自动忽略，不参与评分</li>
+<li><strong>对局结束</strong>：匹配”对局时间”或”战绩总结”文字</li>
+</ul>
+<p>单帧 OCR 去重：同一击杀事件连续出现时，取置信度最高的帧。<br>首次运行保存 OCR 缓存（<code>.ocr_cache.json</code>），后续运行直接读取。</p>
+<h3 id="4-3-弹幕分析"><a href="#4-3-弹幕分析" class="headerlink" title="4.3 弹幕分析"></a>4.3 弹幕分析</h3><p>抖音弹幕 JSON 格式：</p>
+<figure class="highlight json"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">  <span class="attr">&quot;metadata&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span><span class="attr">&quot;room_id&quot;</span><span class="punctuation">:</span> <span class="string">&quot;...&quot;</span><span class="punctuation">,</span> <span class="attr">&quot;danmaku_count&quot;</span><span class="punctuation">:</span> <span class="number">938</span><span class="punctuation">,</span> ...<span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;events&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="punctuation">&#123;</span><span class="attr">&quot;type&quot;</span><span class="punctuation">:</span> <span class="string">&quot;chat&quot;</span><span class="punctuation">,</span> <span class="attr">&quot;nickname&quot;</span><span class="punctuation">:</span> <span class="string">&quot;...&quot;</span><span class="punctuation">,</span> <span class="attr">&quot;content&quot;</span><span class="punctuation">:</span> <span class="string">&quot;...&quot;</span><span class="punctuation">,</span> <span class="attr">&quot;timestamp&quot;</span><span class="punctuation">:</span> <span class="number">1779872583</span><span class="punctuation">&#125;</span><span class="punctuation">,</span> ...<span class="punctuation">]</span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br></pre></td></tr></table></figure>
+
+<p>时间归一化：<code>rel_time = event.timestamp - first_event.timestamp</code>，所有时间戳转为相对秒数。</p>
+<p><strong>密度计算</strong>：2 秒分桶，统计每桶弹幕数。基线 &#x3D; 均值 × 1.5。超级峰值 ≥ 5x 基线，普通峰值 ≥ 3x 基线。</p>
+<p><strong>关键词分类</strong>：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">POS_DM = [<span class="string">&#x27;666&#x27;</span>, <span class="string">&#x27;牛逼&#x27;</span>, <span class="string">&#x27;牛&#x27;</span>, <span class="string">&#x27;强&#x27;</span>, <span class="string">&#x27;厉害&#x27;</span>, <span class="string">&#x27;帅&#x27;</span>, <span class="string">&#x27;猛&#x27;</span>, <span class="string">&#x27;太强&#x27;</span>, <span class="string">&#x27;好强&#x27;</span>, <span class="string">&#x27;无敌&#x27;</span>, <span class="string">&#x27;太猛&#x27;</span>, <span class="string">&#x27;操作&#x27;</span>]</span><br><span class="line">NEG_DM = [<span class="string">&#x27;无聊&#x27;</span>, <span class="string">&#x27;没意思&#x27;</span>, <span class="string">&#x27;困了&#x27;</span>, <span class="string">&#x27;睡了&#x27;</span>]</span><br><span class="line">LAUGH_DM = [<span class="string">&#x27;哈哈&#x27;</span>, <span class="string">&#x27;笑死&#x27;</span>, <span class="string">&#x27;哈哈哈哈&#x27;</span>, <span class="string">&#x27;hhh&#x27;</span>, <span class="string">&#x27;233&#x27;</span>, <span class="string">&#x27;好笑&#x27;</span>, <span class="string">&#x27;搞笑&#x27;</span>]</span><br><span class="line">EXCITED_DM = [<span class="string">&#x27;卧槽&#x27;</span>, <span class="string">&#x27;我靠&#x27;</span>, <span class="string">&#x27;wc&#x27;</span>, <span class="string">&#x27;不是吧&#x27;</span>, <span class="string">&#x27;太假了&#x27;</span>, <span class="string">&#x27;离谱&#x27;</span>, <span class="string">&#x27;啊？&#x27;</span>]</span><br></pre></td></tr></table></figure>
+
+<p>特征计算：<code>dm_pos_ratio = 含好评词的弹幕数 / 总弹幕数</code>，以此类推。</p>
+<p><strong>高频词提取</strong>：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">extract_top_words</span>(<span class="params">texts, top_n=<span class="number">10</span></span>):</span><br><span class="line">    <span class="comment"># 先尝试 jieba 分词，不可用则回退字符 2-gram</span></span><br><span class="line">    <span class="comment"># 返回: &#123;words: [(词, 频次)], max_freq, hot_word_count, has_hot_topic, top_ratio&#125;</span></span><br></pre></td></tr></table></figure>
+
+<p><code>has_hot_topic</code> 当单一关键词占比 &gt; 40% 时触发（权重 +0.39，是弹幕类最有效特征）。</p>
+<h3 id="4-4-RL-模型评分"><a href="#4-4-RL-模型评分" class="headerlink" title="4.4 RL 模型评分"></a>4.4 RL 模型评分</h3><h4 id="特征提取"><a href="#特征提取" class="headerlink" title="特征提取"></a>特征提取</h4><p>从候选片段提取 35 维向量（<code>FEATURE_NAMES</code> 定义在 <code>feature_extractor.py</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>特征</th>
+<th>维数</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>弹幕密度</td>
+<td>duration, anchor_count, max_dm_ratio, dm_count, has_super_dm, has_dm_peak</td>
+<td>6</td>
+</tr>
+<tr>
+<td>弹幕内容</td>
+<td>dm_pos_ratio, dm_neg_ratio, dm_laugh_ratio, dm_excited_count</td>
+<td>4</td>
+</tr>
+<tr>
+<td>高频词</td>
+<td>top_word_max_freq, top_word_count, top_word_ratio, has_hot_topic</td>
+<td>4</td>
+</tr>
+<tr>
+<td>语音情绪</td>
+<td>voice_excited_count, voice_surge_count, voice_fast_count, has_voice_excited, has_volume_surge</td>
+<td>5</td>
+</tr>
+<tr>
+<td>游戏事件</td>
+<td>kill_count, has_squad_wipe, has_clutch, has_loot_found, has_match_start, has_match_end, has_death, has_revive</td>
+<td>8</td>
+</tr>
+<tr>
+<td>OCR 事件</td>
+<td>ocr_kill_count, has_ocr_kill, has_ocr_match_end, ocr_confidence_max</td>
+<td>4</td>
+</tr>
+<tr>
+<td>叙事结构</td>
+<td>narrative_full, narrative_start_end, has_climax</td>
+<td>3</td>
+</tr>
+<tr>
+<td>对局位置</td>
+<td>round_position</td>
+<td>1</td>
+</tr>
+</tbody></table>
+<h4 id="Warm-Start"><a href="#Warm-Start" class="headerlink" title="Warm Start"></a>Warm Start</h4><p>用 3000 个采样自经验分布的随机特征向量模拟真实数据，原规则系统为每个样本计算伪评分，Linear Regression 拟合得到初始权重。OCR 特征 ×2.5、高频词特征 ×2.0 显式增强。</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 伪规则评分（近似原 score_candidate）</span></span><br><span class="line">s = <span class="number">3.0</span></span><br><span class="line"><span class="keyword">if</span> has_super_dm:     s += <span class="number">5</span> <span class="keyword">if</span> max_dm_ratio &gt;= <span class="number">10</span> <span class="keyword">else</span> <span class="number">3</span></span><br><span class="line"><span class="keyword">if</span> dm_pos_ratio &gt; <span class="number">0.3</span>: s += <span class="number">2</span></span><br><span class="line"><span class="keyword">if</span> dm_laugh_ratio &gt; <span class="number">0.2</span>: s += <span class="number">2</span></span><br><span class="line"><span class="keyword">if</span> dm_neg_ratio &gt; <span class="number">0.3</span>: s -= <span class="number">3</span></span><br><span class="line"><span class="keyword">if</span> has_ocr_kill:     s += <span class="number">4</span> <span class="keyword">if</span> kill_count &gt;= <span class="number">1</span> <span class="keyword">else</span> <span class="number">3</span></span><br><span class="line"><span class="comment"># ... 等约 30 条规则</span></span><br><span class="line">y[i] = np.clip(s, <span class="number">0</span>, <span class="number">10</span>)</span><br><span class="line"></span><br><span class="line"><span class="comment"># 拟合</span></span><br><span class="line">lr = LinearRegression().fit(X, y)</span><br><span class="line">coef[OCR_INDICES] *= <span class="number">2.5</span>  <span class="comment"># OCR 增强</span></span><br><span class="line">coef[WORD_INDICES] *= <span class="number">2.0</span>  <span class="comment"># 高频词增强</span></span><br></pre></td></tr></table></figure>
+
+<h4 id="偏好学习"><a href="#偏好学习" class="headerlink" title="偏好学习"></a>偏好学习</h4><figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">PairwisePreferenceLearner</span>:</span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">fit</span>(<span class="params">self, X_diff</span>):</span><br><span class="line">        <span class="comment"># 数据增强：每个正对 (A-B, 1) 生成负对 (B-A, 0)</span></span><br><span class="line">        X_aug = np.vstack([X_diff, -X_diff])</span><br><span class="line">        y_aug = np.hstack([np.ones(n), np.zeros(n)])</span><br><span class="line">        <span class="comment"># StandardScaler 归一化 + LogisticRegression(C=1.0, fit_intercept=False)</span></span><br><span class="line">        <span class="variable language_">self</span>.model.fit(<span class="variable language_">self</span>.scaler.fit_transform(X_aug), y_aug)</span><br><span class="line"></span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">predict_score</span>(<span class="params">self, features</span>):</span><br><span class="line">        raw = <span class="variable language_">self</span>.model.decision_function(<span class="variable language_">self</span>.scaler.transform(features.reshape(<span class="number">1</span>, -<span class="number">1</span>)))</span><br><span class="line">        <span class="keyword">return</span> np.clip(raw[<span class="number">0</span>], <span class="number">0.0</span>, <span class="number">10.0</span>)</span><br></pre></td></tr></table></figure>
+
+<p>关键设计：<code>fit_intercept=False</code>，确保 <code>score = w · features</code>，权重直接可解释为特征贡献。</p>
+<h4 id="特征版本管理"><a href="#特征版本管理" class="headerlink" title="特征版本管理"></a>特征版本管理</h4><p>特征列表变更时递增 <code>FEATURE_VERSION</code>，旧模型自动失效，重新 Warm Start：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">FEATURE_VERSION = <span class="number">2</span>  <span class="comment"># 修改 FEATURE_NAMES 时必须递增</span></span><br></pre></td></tr></table></figure>
+
+<h3 id="4-5-反馈存储与训练"><a href="#4-5-反馈存储与训练" class="headerlink" title="4.5 反馈存储与训练"></a>4.5 反馈存储与训练</h3><figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">FeedbackStore</span>:</span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">save_feedback</span>(<span class="params">self, run_id, video_path, selected_ids,</span></span><br><span class="line"><span class="params">                      candidate_features, candidate_scores, ...</span>):</span><br><span class="line">        <span class="comment"># 1. 保存特征缓存: features/&#123;run_id&#125;.npz</span></span><br><span class="line">        np.savez_compressed(features_path, **&#123;cid: feats <span class="keyword">for</span> ...&#125;)</span><br><span class="line">        <span class="comment"># 2. 追加反馈记录: feedback_history.jsonl</span></span><br><span class="line">        entry = &#123;<span class="string">&#x27;run_id&#x27;</span>, <span class="string">&#x27;selected_ids&#x27;</span>, <span class="string">&#x27;selected_scores&#x27;</span>, <span class="string">&#x27;all_scores&#x27;</span>, ...&#125;</span><br><span class="line">        jsonl.append(entry)</span><br><span class="line"></span><br><span class="line">    <span class="keyword">def</span> <span class="title function_">build_training_pairs</span>(<span class="params">self, min_score_gap=<span class="number">1.0</span></span>):</span><br><span class="line">        <span class="comment"># 选中 vs 未选中 + 分数差 &gt;= min_score_gap → 正对</span></span><br><span class="line">        <span class="comment"># 返回: X_diff (n_pairs × n_features), pair_info</span></span><br></pre></td></tr></table></figure>
+
+<p>训练时机：每次 <code>--feedback</code> 标注后立即增量训练，<code>--retrain</code> 用全部历史反馈批量重训练。</p>
+<h3 id="4-6-视频切割"><a href="#4-6-视频切割" class="headerlink" title="4.6 视频切割"></a>4.6 视频切割</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">ffmpeg -hwaccel cuda -hwaccel_output_format cuda \</span><br><span class="line">  -i input.flv -ss &#123;start&#125; -to &#123;end&#125; \</span><br><span class="line">  -c:v h264_nvenc -preset p1 -cq 20 \</span><br><span class="line">  -c:a aac -b:a 128k output.mp4</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li>使用 NVENC 硬件编码，<code>-preset p1</code> 最快，<code>-cq 20</code> 质量控制</li>
+<li>短切片（&lt;30s）额外使用 scale 滤镜裁剪为 1440×1080</li>
+<li>实际切割在源素材起止点基础上前后各加 30s padding</li>
+</ul>
+<h3 id="4-7-缓存机制"><a href="#4-7-缓存机制" class="headerlink" title="4.7 缓存机制"></a>4.7 缓存机制</h3><table>
+<thead>
+<tr>
+<th>缓存</th>
+<th>路径</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>转录缓存</td>
+<td><code>&#123;video_dir&#125;/transcript_output/transcript.json</code></td>
+<td>Whisper 转录结果，幂等跳过</td>
+</tr>
+<tr>
+<td>音频缓存</td>
+<td><code>&#123;video_dir&#125;/transcript_output/audio.wav</code></td>
+<td>已提取音频，幂等跳过</td>
+</tr>
+<tr>
+<td>OCR 缓存</td>
+<td><code>&#123;video_path&#125;.ocr_cache.json</code></td>
+<td>画面 OCR 事件列表，避免重复 GPU 推理</td>
+</tr>
+<tr>
+<td>模型权重</td>
+<td><code>model_data/model_weights.pkl</code></td>
+<td>joblib 序列化的 PairwisePreferenceLearner</td>
+</tr>
+<tr>
+<td>特征缓存</td>
+<td><code>model_data/features/&#123;run_id&#125;.npz</code></td>
+<td>每次运行的候选特征向量</td>
+</tr>
+<tr>
+<td>反馈记录</td>
+<td><code>model_data/feedback_history.jsonl</code></td>
+<td>用户标注历史</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="五、核心技术难点"><a href="#五、核心技术难点" class="headerlink" title="五、核心技术难点"></a>五、核心技术难点</h2><h3 id="5-1-OCR-画面识别的精确性"><a href="#5-1-OCR-画面识别的精确性" class="headerlink" title="5.1 OCR 画面识别的精确性"></a>5.1 OCR 画面识别的精确性</h3><p><strong>问题</strong>：击杀信息在屏幕上仅持续 2-3 秒，文字半透明叠加在游戏画面上，检测窗口窄且干扰多。</p>
+<p><strong>解决方案</strong>：</p>
+<ul>
+<li>裁剪到固定信息区域 <code>(665, 596, 1256, 931)</code>，排除画面主体干扰</li>
+<li>每 1 秒 1 帧高密度采样（51 分钟 &#x3D; 3045 帧），不漏检</li>
+<li>连续帧去重 + 置信度取最大值，避免同一击杀重复计数</li>
+<li>PvP&#x2F;PvE 区分：通过玩家名格式（<code>#数字</code> vs 固定名）过滤人机</li>
+<li>OCR 结果缓存到 JSON 文件，后续运行直接读取</li>
+</ul>
+<h3 id="5-2-偏好学习的冷启动"><a href="#5-2-偏好学习的冷启动" class="headerlink" title="5.2 偏好学习的冷启动"></a>5.2 偏好学习的冷启动</h3><p><strong>问题</strong>：RL 模型从零开始（随机权重）时，前几次分析评分毫无意义，用户体验极差。</p>
+<p><strong>解决方案</strong>：</p>
+<ul>
+<li><strong>Warm Start</strong>：用 3000 个采样的随机特征向量 + 原规则系统伪评分 → Linear Regression 拟合得到初始权重</li>
+<li>OCR 和高频词特征显式增强（×2.5 &#x2F; ×2.0），反映这些信号的客观性</li>
+<li>初始模型行为 ≈ 规则系统，但权重是连续可微调的值</li>
+<li>Warm Start 后的模型已有合理的排序能力，用户第一次分析就能看到有意义的评分</li>
+</ul>
+<h3 id="5-3-特征工程与词典覆盖"><a href="#5-3-特征工程与词典覆盖" class="headerlink" title="5.3 特征工程与词典覆盖"></a>5.3 特征工程与词典覆盖</h3><p><strong>问题</strong>：关键词词典（好评&#x2F;笑声&#x2F;惊叹）比较通用，覆盖不全。例如”拉闸””天才”在实战弹幕中出现 16&#x2F;15 次，但未被任何词典收录，无法参与特征计算。</p>
+<p><strong>解决方案</strong>：</p>
+<ul>
+<li>当前：高频词特征（<code>has_hot_topic</code>、<code>top_word_ratio</code>）部分弥补，不依赖具体词典的通用高频信号</li>
+<li>未来：自动发现高频新词 → 提示用户加入词典；从特征级权重下沉到词级权重</li>
+</ul>
+<h3 id="5-4-短切片与长切片的协调"><a href="#5-4-短切片与长切片的协调" class="headerlink" title="5.4 短切片与长切片的协调"></a>5.4 短切片与长切片的协调</h3><p><strong>问题</strong>：长切片提供上下文（15-150s），短切片提供精剪（&lt;30s 仅 PvP 击杀），两者评分标准不同但共享同一个 RL 模型。</p>
+<p><strong>解决方案</strong>：</p>
+<ul>
+<li>短切片使用”OCR 必录”机制：PvP 击杀检测到即强制收录，不依赖评分</li>
+<li>短切片评分只影响优先级排序，不影响是否收录</li>
+<li>长切片仍由 RL 模型全权评分</li>
+<li>两者在 <code>analysis_result.json</code> 中通过 <code>clip_type</code> 字段区分</li>
+</ul>
+<h3 id="5-5-用户偏好的快速适应"><a href="#5-5-用户偏好的快速适应" class="headerlink" title="5.5 用户偏好的快速适应"></a>5.5 用户偏好的快速适应</h3><p><strong>问题</strong>：单次标注样本量小（10-25 个候选），传统批量训练容易过拟合。</p>
+<p><strong>解决方案</strong>：</p>
+<ul>
+<li>成对比较天然做数据增强：11 个选中 × 14 个未选中 &#x3D; 154 个理论对</li>
+<li>加入 <code>min_score_gap=1.0</code> 过滤噪音对（分数接近的跳过）</li>
+<li><code>partial_fit</code> + 高样本权重（<code>learning_rate × 10</code>）加速适应新反馈</li>
+<li>每次训练后输出 Top-N 权重变化，用户可直观理解模型学到了什么</li>
+</ul>
+<hr>
+<h2 id="六、项目使用"><a href="#六、项目使用" class="headerlink" title="六、项目使用"></a>六、项目使用</h2><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 标准用法：分析 + 切割</span></span><br><span class="line">/delta-force-clip-rl /path/to/recording_dir</span><br><span class="line"></span><br><span class="line"><span class="comment"># 带反馈训练（标注最佳切片 → 自动训练）</span></span><br><span class="line">/delta-force-clip-rl /path/to/recording_dir --feedback</span><br><span class="line"></span><br><span class="line"><span class="comment"># 批量重训练（积累足够反馈后用全部历史数据）</span></span><br><span class="line">/delta-force-clip-rl /path/to/recording_dir --retrain</span><br><span class="line"></span><br><span class="line"><span class="comment"># 重置模型（如果学歪了，回到 Warm Start）</span></span><br><span class="line">/delta-force-clip-rl /path/to/recording_dir --reset-model</span><br><span class="line"></span><br><span class="line"><span class="comment"># 调整最大切片数</span></span><br><span class="line">/delta-force-clip-rl /path/to/recording_dir --max-clips 30</span><br></pre></td></tr></table></figure>
+
+<p><strong>底层命令</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 步骤1: 语音转写</span></span><br><span class="line">python transcribe_pipeline.py &lt;video.flv&gt; --output-dir transcript_output/</span><br><span class="line"></span><br><span class="line"><span class="comment"># 步骤2: 联合分析（RL 评分）</span></span><br><span class="line">python analyze_clips_rl.py &lt;danmaku.json&gt; &lt;transcript.json&gt; &lt;duration&gt; \</span><br><span class="line">    --vision &lt;video.flv&gt; --output analysis_result.json</span><br><span class="line"></span><br><span class="line"><span class="comment"># 步骤3: 确认后切割</span></span><br><span class="line">python cut_clips.py &lt;video.flv&gt; analysis_result.json --output-dir clips/</span><br></pre></td></tr></table></figure>
+
+<p>输出结构：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">recordings/&#123;主播名&#125;/&#123;日期&#125;/</span><br><span class="line">├── &#123;时间&#125;.flv                          # 源视频</span><br><span class="line">├── &#123;时间&#125;.danmaku.json                 # 弹幕数据</span><br><span class="line">├── transcript_output/</span><br><span class="line">│   ├── audio.wav                       # 已提取音频</span><br><span class="line">│   └── transcript.json                 # 转录 + 情绪标注</span><br><span class="line">├── analysis_result.json                # 切片方案</span><br><span class="line">└── clips/</span><br><span class="line">    ├── long/                           # 长切片</span><br><span class="line">    │   ├── 第1局_000056_000221.mp4</span><br><span class="line">    │   └── ...</span><br><span class="line">    ├── short/                          # 短切片（PvP击杀）</span><br><span class="line">    └── clip_info.json                  # 切片元信息</span><br></pre></td></tr></table></figure>
+
+<hr>
+<h2 id="七、项目结构"><a href="#七、项目结构" class="headerlink" title="七、项目结构"></a>七、项目结构</h2><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">delta-force-clip-rl/</span><br><span class="line">├── skill.md                        # Skill 定义与工作流程文档</span><br><span class="line">├── transcribe_pipeline.py          # 语音转写管线（ffmpeg + faster-whisper + 情绪分析）</span><br><span class="line">├── analyze_clips_rl.py             # 多模态联合分析 + RL 评分 + 反馈收集（主入口）</span><br><span class="line">├── cut_clips.py                    # GPU 视频切割（ffmpeg NVENC）</span><br><span class="line">├── vision_ocr.py                   # 画面 OCR 击杀检测（PaddleOCR + ffmpeg NVDEC）</span><br><span class="line">├── rl_model/                       # RL 模型模块</span><br><span class="line">│   ├── feature_extractor.py        # 35 维特征提取 + 关键词词典 + 高频词统计</span><br><span class="line">│   ├── scorer.py                   # RL 评分器（Warm Start / predict / 训练 / 持久化）</span><br><span class="line">│   ├── train.py                    # 成对偏好学习器（LogisticRegression + 数据增强）</span><br><span class="line">│   └── feedback_store.py           # 反馈存储（JSONL + .npz 特征缓存 + 训练对构建）</span><br><span class="line">└── model_data/                     # 模型持久化数据</span><br><span class="line">    ├── model_weights.pkl           # 序列化模型（joblib）</span><br><span class="line">    ├── feature_names.json          # 特征名列表 + 版本号</span><br><span class="line">    ├── feedback_history.jsonl      # 用户标注历史</span><br><span class="line">    └── features/                   # 特征向量缓存</span><br><span class="line">        ├── run_xxxxxxxxxx.npz</span><br><span class="line">        └── ...</span><br></pre></td></tr></table></figure>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/">https://brszzz.github.io/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Python/">Python</a><a class="post-meta__tags" href="/tags/AI%E5%88%86%E6%9E%90/">AI分析</a><a class="post-meta__tags" href="/tags/%E5%BC%B9%E5%B9%95%E5%88%86%E6%9E%90/">弹幕分析</a><a class="post-meta__tags" href="/tags/%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0/">强化学习</a><a class="post-meta__tags" href="/tags/%E5%81%8F%E5%A5%BD%E5%AD%A6%E4%B9%A0/">偏好学习</a><a class="post-meta__tags" href="/tags/%E8%AF%AD%E9%9F%B3%E8%BD%AC%E5%86%99/">语音转写</a><a class="post-meta__tags" href="/tags/OCR/">OCR</a><a class="post-meta__tags" href="/tags/%E8%A7%86%E9%A2%91%E5%88%87%E5%89%B2/">视频切割</a><a class="post-meta__tags" href="/tags/faster-whisper/">faster-whisper</a><a class="post-meta__tags" href="/tags/PaddleOCR/">PaddleOCR</a><a class="post-meta__tags" href="/tags/scikit-learn/">scikit-learn</a><a class="post-meta__tags" href="/tags/ffmpeg/">ffmpeg</a><a class="post-meta__tags" href="/tags/GPU%E5%8A%A0%E9%80%9F/">GPU加速</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/05/29/%E4%BB%8E%E9%9B%B6%E6%90%AD%E5%BB%BA%E4%B8%80%E4%B8%AA%E6%8A%80%E6%9C%AF%E5%8D%9A%E5%AE%A2%E2%80%94%E2%80%94Hexo-Butterfly%E4%B8%BB%E9%A2%98%E6%B7%B1%E5%BA%A6%E5%AE%9A%E5%88%B6%E5%AE%9E%E5%BD%95/" title="从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录</div></div><div class="info-2"><div class="info-item-1">记录从零搭建 Hexo + Butterfly 技术博客的完整过程，涵盖主题定制、暗色模式、搜索集成、评论系统、文章抓取自动化、DOM 异常排查与缓存策略等实战细节。</div></div></div></a><a class="pagination-related" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">深入解析 23MB 的"加密"迷雾：一次 Android 游戏外挂的完整逆向之旅</div></div><div class="info-2"><div class="info-item-1">记录一次完整的 Android 游戏外挂逆向分析过程，从被误判的"加密"疑点出发，通过 OLLVM 去混淆、TBZ 寄存器分析和 maps 对比，还原基于 shadowhook 框架的注入架构</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">斗鱼直播 AI 分析系统 — 项目文档</div></div><div class="info-2"><div class="info-item-1">斗鱼直播自动录制+AI智能分析系统，通过DeepSeek/Claude大模型进行多维度分析，自动识别直播精彩片段和高光时刻</div></div></div></a><a class="pagination-related" href="/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/" title="AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-04-29</div><div class="info-item-2">AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本</div></div><div class="info-2"><div class="info-item-1">## AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本  ### 1. 引言  本文记录了一次完整的安卓 ELF（.so）外挂样本逆向分析过程。样本是一个面向某 UE4 射击游戏的游戏作弊模块，基于 Unreal Engine 4 引擎开发。 传统逆向工程依赖人工阅读反汇编代码、逐条追踪指令流，分析周期通常以天甚至周计。本文展示如何利用 **AI 辅助逆向** 工作</div></div></div></a><a class="pagination-related" href="/2026/05/25/douyu-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/" title="斗鱼直播录制与分析系统 — 项目技术文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">斗鱼直播录制与分析系统 — 项目技术文档</div></div><div class="info-2"><div class="info-item-1">完整的斗鱼直播录制与AI分析系统技术文档，涵盖弹幕协议逆向、视频流签名、Whisper语音转写、AI高光识别等核心技术实现</div></div></div></a><a class="pagination-related" href="/2026/05/25/douyin-live-recorder-%E9%A1%B9%E7%9B%AE%E6%8A%80%E6%9C%AF%E6%96%87%E6%A1%A3/" title="抖音直播录制工具 — 项目技术文档"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">抖音直播录制工具 — 项目技术文档</div></div><div class="info-2"><div class="info-item-1">Python CLI 抖音直播录制工具，支持高清视频原画下载和时间同步弹幕采集，含完整技术架构与逆向实现细节</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1975312-%E8%A7%A3%E5%8C%85%E5%B0%8F%E7%B1%B311%E7%9A%84bootimg%E8%BF%98%E5%8E%9F%E5%86%85%E6%A0%B8%E7%AC%A6%E5%8F%B7%E4%BB%A5%E5%8F%8A%E5%9C%B0%E5%9D%80/" title="解包小米11的boot.img，还原内核符号以及地址"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">解包小米11的boot.img，还原内核符号以及地址</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  因为一些教程过于老旧，为了防止自己以后重复踩坑，故记录一下学习过程中遇到的一些坑和现在有效的方法。  设备：mi 11 venus 内核版本5.4.210  **0x1 解包boot.img**  提取内核什么的就直接跳过，网上有很多资料都是可以直接用的，去官网下包或者有root的dd提取都可以。  首先先大概了解一下安卓内核  比较重要的几个分区如下：  1</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER<br>qq:2132152966</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%B8%89%E8%A7%92%E6%B4%B2%E8%A1%8C%E5%8A%A8%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87-AI-%E7%B3%BB%E7%BB%9F-%E2%80%94-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3"><span class="toc-number">1.</span> <span class="toc-text">三角洲行动直播切片 AI 系统 — 项目文档</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E9%A1%B9%E7%9B%AE%E7%AE%80%E4%BB%8B"><span class="toc-number">1.1.</span> <span class="toc-text">一、项目简介</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%A0%B8%E5%BF%83%E5%8A%9F%E8%83%BD"><span class="toc-number">1.1.1.</span> <span class="toc-text">核心功能</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%B7%A5%E4%BD%9C%E6%B5%81%E7%A8%8B"><span class="toc-number">1.1.2.</span> <span class="toc-text">工作流程</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81%E5%BC%80%E5%8F%91%E8%BF%87%E7%A8%8B"><span class="toc-number">1.2.</span> <span class="toc-text">二、开发过程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-%E9%A1%B9%E7%9B%AE%E8%B5%B7%E7%82%B9"><span class="toc-number">1.2.1.</span> <span class="toc-text">2.1 项目起点</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-2-%E8%BF%AD%E4%BB%A3%E8%BF%87%E7%A8%8B"><span class="toc-number">1.2.2.</span> <span class="toc-text">2.2 迭代过程</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81%E6%8A%80%E6%9C%AF%E6%A0%88"><span class="toc-number">1.3.</span> <span class="toc-text">三、技术栈</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81%E6%8A%80%E6%9C%AF%E5%AE%9E%E7%8E%B0%E7%BB%86%E8%8A%82"><span class="toc-number">1.4.</span> <span class="toc-text">四、技术实现细节</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#4-1-%E9%9F%B3%E9%A2%91%E6%8F%90%E5%8F%96%E4%B8%8E%E8%AF%AD%E9%9F%B3%E8%BD%AC%E5%BD%95"><span class="toc-number">1.4.1.</span> <span class="toc-text">4.1 音频提取与语音转录</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-2-%E7%94%BB%E9%9D%A2-OCR-%E5%87%BB%E6%9D%80%E6%A3%80%E6%B5%8B"><span class="toc-number">1.4.2.</span> <span class="toc-text">4.2 画面 OCR 击杀检测</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-3-%E5%BC%B9%E5%B9%95%E5%88%86%E6%9E%90"><span class="toc-number">1.4.3.</span> <span class="toc-text">4.3 弹幕分析</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-4-RL-%E6%A8%A1%E5%9E%8B%E8%AF%84%E5%88%86"><span class="toc-number">1.4.4.</span> <span class="toc-text">4.4 RL 模型评分</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%E7%89%B9%E5%BE%81%E6%8F%90%E5%8F%96"><span class="toc-number">1.4.4.1.</span> <span class="toc-text">特征提取</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Warm-Start"><span class="toc-number">1.4.4.2.</span> <span class="toc-text">Warm Start</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E5%81%8F%E5%A5%BD%E5%AD%A6%E4%B9%A0"><span class="toc-number">1.4.4.3.</span> <span class="toc-text">偏好学习</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E7%89%B9%E5%BE%81%E7%89%88%E6%9C%AC%E7%AE%A1%E7%90%86"><span class="toc-number">1.4.4.4.</span> <span class="toc-text">特征版本管理</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-5-%E5%8F%8D%E9%A6%88%E5%AD%98%E5%82%A8%E4%B8%8E%E8%AE%AD%E7%BB%83"><span class="toc-number">1.4.5.</span> <span class="toc-text">4.5 反馈存储与训练</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-6-%E8%A7%86%E9%A2%91%E5%88%87%E5%89%B2"><span class="toc-number">1.4.6.</span> <span class="toc-text">4.6 视频切割</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-7-%E7%BC%93%E5%AD%98%E6%9C%BA%E5%88%B6"><span class="toc-number">1.4.7.</span> <span class="toc-text">4.7 缓存机制</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81%E6%A0%B8%E5%BF%83%E6%8A%80%E6%9C%AF%E9%9A%BE%E7%82%B9"><span class="toc-number">1.5.</span> <span class="toc-text">五、核心技术难点</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#5-1-OCR-%E7%94%BB%E9%9D%A2%E8%AF%86%E5%88%AB%E7%9A%84%E7%B2%BE%E7%A1%AE%E6%80%A7"><span class="toc-number">1.5.1.</span> <span class="toc-text">5.1 OCR 画面识别的精确性</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-2-%E5%81%8F%E5%A5%BD%E5%AD%A6%E4%B9%A0%E7%9A%84%E5%86%B7%E5%90%AF%E5%8A%A8"><span class="toc-number">1.5.2.</span> <span class="toc-text">5.2 偏好学习的冷启动</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-3-%E7%89%B9%E5%BE%81%E5%B7%A5%E7%A8%8B%E4%B8%8E%E8%AF%8D%E5%85%B8%E8%A6%86%E7%9B%96"><span class="toc-number">1.5.3.</span> <span class="toc-text">5.3 特征工程与词典覆盖</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-4-%E7%9F%AD%E5%88%87%E7%89%87%E4%B8%8E%E9%95%BF%E5%88%87%E7%89%87%E7%9A%84%E5%8D%8F%E8%B0%83"><span class="toc-number">1.5.4.</span> <span class="toc-text">5.4 短切片与长切片的协调</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-5-%E7%94%A8%E6%88%B7%E5%81%8F%E5%A5%BD%E7%9A%84%E5%BF%AB%E9%80%9F%E9%80%82%E5%BA%94"><span class="toc-number">1.5.5.</span> <span class="toc-text">5.5 用户偏好的快速适应</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81%E9%A1%B9%E7%9B%AE%E4%BD%BF%E7%94%A8"><span class="toc-number">1.6.</span> <span class="toc-text">六、项目使用</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%83%E3%80%81%E9%A1%B9%E7%9B%AE%E7%BB%93%E6%9E%84"><span class="toc-number">1.7.</span> <span class="toc-text">七、项目结构</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原">DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E9%9B%B6%E6%90%AD%E5%BB%BA%E4%B8%80%E4%B8%AA%E6%8A%80%E6%9C%AF%E5%8D%9A%E5%AE%A2%E2%80%94%E2%80%94Hexo-Butterfly%E4%B8%BB%E9%A2%98%E6%B7%B1%E5%BA%A6%E5%AE%9A%E5%88%B6%E5%AE%9E%E5%BD%95/" title="从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录">从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录</a><time datetime="2026-05-29T14:00:00.000Z" title="发表于 2026-05-29 22:00:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/" title="从规则到偏好——用强化学习做游戏直播AI切片">从规则到偏好——用强化学习做游戏直播AI切片</a><time datetime="2026-05-29T07:30:00.000Z" title="发表于 2026-05-29 15:30:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</a><time datetime="2026-05-25T04:00:00.000Z" title="发表于 2026-05-25 12:00:00">2026-05-25</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档">斗鱼直播 AI 分析系统 — 项目文档</a><time datetime="2026-05-25T02:40:00.000Z" title="发表于 2026-05-25 10:40:00">2026-05-25</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

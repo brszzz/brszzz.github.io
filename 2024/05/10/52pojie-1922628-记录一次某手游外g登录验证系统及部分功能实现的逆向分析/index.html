@@ -1,0 +1,250 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>记录一次某手游外g登录验证系统及部分功能实现的逆向分析 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="**0x0 JAVA层的登录验证分析**  首先这个g是[破解](https:&#x2F;&#x2F;www.52pojie.cn)版，使用的静态注入，游戏使用的引擎是UE4。所以先看看AndroidManifest.xml里应用程序的入口点，入口点果然被修改了，  &#96;&lt;activity android:name&#x3D;&quot;com.xxxx.xxx.MainActivity&quot; android:exp">
+<meta property="og:type" content="article">
+<meta property="og:title" content="记录一次某手游外g登录验证系统及部分功能实现的逆向分析">
+<meta property="og:url" content="https://brszzz.github.io/2024/05/10/52pojie-1922628-%E8%AE%B0%E5%BD%95%E4%B8%80%E6%AC%A1%E6%9F%90%E6%89%8B%E6%B8%B8%E5%A4%96g%E7%99%BB%E5%BD%95%E9%AA%8C%E8%AF%81%E7%B3%BB%E7%BB%9F%E5%8F%8A%E9%83%A8%E5%88%86%E5%8A%9F%E8%83%BD%E5%AE%9E%E7%8E%B0%E7%9A%84%E9%80%86%E5%90%91%E5%88%86%E6%9E%90/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="**0x0 JAVA层的登录验证分析**  首先这个g是[破解](https:&#x2F;&#x2F;www.52pojie.cn)版，使用的静态注入，游戏使用的引擎是UE4。所以先看看AndroidManifest.xml里应用程序的入口点，入口点果然被修改了，  &#96;&lt;activity android:name&#x3D;&quot;com.xxxx.xxx.MainActivity&quot; android:exp">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2024-05-10T11:13:00.000Z">
+<meta property="article:modified_time" content="2026-06-21T15:49:40.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="Java">
+<meta property="article:tag" content="注入技术">
+<meta property="article:tag" content="Hook">
+<meta property="article:tag" content="Unreal">
+<meta property="article:tag" content="外挂分析">
+<meta property="article:tag" content="游戏安全">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "记录一次某手游外g登录验证系统及部分功能实现的逆向分析",
+  "url": "https://brszzz.github.io/2024/05/10/52pojie-1922628-%E8%AE%B0%E5%BD%95%E4%B8%80%E6%AC%A1%E6%9F%90%E6%89%8B%E6%B8%B8%E5%A4%96g%E7%99%BB%E5%BD%95%E9%AA%8C%E8%AF%81%E7%B3%BB%E7%BB%9F%E5%8F%8A%E9%83%A8%E5%88%86%E5%8A%9F%E8%83%BD%E5%AE%9E%E7%8E%B0%E7%9A%84%E9%80%86%E5%90%91%E5%88%86%E6%9E%90/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2024-05-10T11:13:00.000Z",
+  "dateModified": "2026-06-21T15:49:40.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2024/05/10/52pojie-1922628-%E8%AE%B0%E5%BD%95%E4%B8%80%E6%AC%A1%E6%9F%90%E6%89%8B%E6%B8%B8%E5%A4%96g%E7%99%BB%E5%BD%95%E9%AA%8C%E8%AF%81%E7%B3%BB%E7%BB%9F%E5%8F%8A%E9%83%A8%E5%88%86%E5%8A%9F%E8%83%BD%E5%AE%9E%E7%8E%B0%E7%9A%84%E9%80%86%E5%90%91%E5%88%86%E6%9E%90/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '记录一次某手游外g登录验证系统及部分功能实现的逆向分析',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">记录一次某手游外g登录验证系统及部分功能实现的逆向分析</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">记录一次某手游外g登录验证系统及部分功能实现的逆向分析</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-05-10T11:13:00.000Z" title="发表于 2024-05-10 19:13:00">2024-05-10</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-21T15:49:40.000Z" title="更新于 2026-06-21 23:49:40">2026-06-21</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">16k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>59 mins.分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h3 id="0x0-JAVA层的登录验证分析"><a href="#0x0-JAVA层的登录验证分析" class="headerlink" title="0x0 JAVA层的登录验证分析"></a>0x0 JAVA层的登录验证分析</h3><p>首先这个g是<a target="_blank" rel="noopener" href="https://www.52pojie.cn/">破解</a>版，使用的静态注入，游戏使用的引擎是UE4。所以先看看AndroidManifest.xml里应用程序的入口点，入口点果然被修改了，</p>
+<figure class="highlight xml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">activity</span> <span class="attr">android:name</span>=<span class="string">&quot;com.xxxx.xxx.MainActivity&quot;</span> <span class="attr">android:exported</span>=<span class="string">&quot;true&quot;</span>&gt;</span></span><br><span class="line"></span><br><span class="line"> </span><br><span class="line"></span><br><span class="line"> <span class="tag">&lt;<span class="name">action</span> <span class="attr">android:name</span>=<span class="string">&quot;android.intent.action.MAIN&quot;</span>/&gt;</span></span><br><span class="line"></span><br><span class="line"> <span class="tag">&lt;<span class="name">category</span> <span class="attr">android:name</span>=<span class="string">&quot;android.intent.category.LAUNCHER&quot;</span>/&gt;</span></span><br><span class="line"></span><br><span class="line"> </span><br><span class="line"></span><br><span class="line"> <span class="tag">&lt;/<span class="name">activity</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<p>&lt;activity&gt;：此标签用于在AndroidManifest.xml文件中声明活动组件。一个活动代表一个具有用户界面的屏幕。</p>
+<p>android:name&#x3D;”com.xxxx.xxx.MainActivity”：此属性指定活动的完全限定类名。在这种情况下，活动名为”MainActivity”，属于包”com.xxxx.xxx”。</p>
+<p>android:exported&#x3D;”true”：此属性确定活动是否可以被其他应用程序的组件启动。当设置为”true”时，表示活动对其他应用程序可访问。</p>
+<p>&lt;intent-filter&gt;：此标签用于指定活动可以响应的意图类型。</p>
+<p>&lt;action android:name&#x3D;”android.intent.action.MAIN”&#x2F;&gt;：这表示活动是应用程序的入口点。它响应主要操作，通常用于启动应用程序。</p>
+<p>&lt;category android:name&#x3D;”android.intent.category.LAUNCHER”&#x2F;&gt;：这是一种意图的类别，用于筛选可以直接从主屏幕（启动器）启动的组件。这意味着此活动应出现在启动器中，作为应用程序的入口点。</p>
+<p>正常来说UE4游戏的入口点名字应该是com.epicgames.ue4.SplashActivity,所以他是把入口点替换成了卡密验证程序的入口，接下来就根据他这个路径去看看他这个验证程序是怎么写的，从验证MainActivity的onCreate开始逐步分析，最后定位到了验证的关键位置</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br></pre></td><td class="code"><pre><span class="line">recharge.setOnClickListener(<span class="keyword">new</span> <span class="title class_">View</span>.OnClickListener() &#123; <span class="comment">// from class: com.xxxx.xxx.MainActivity.1</span></span><br><span class="line"></span><br><span class="line"> <span class="meta">@Override</span> <span class="comment">// android.view.View.OnClickListener</span></span><br><span class="line"></span><br><span class="line"> <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">onClick</span><span class="params">(View view)</span> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (editText.getText().toString().equals(<span class="string">&quot;&quot;</span>)) &#123;</span><br><span class="line"></span><br><span class="line"> Toast.makeText(context, <span class="string">&quot;卡密不能为空&quot;</span>, <span class="number">0</span>).show();</span><br><span class="line"></span><br><span class="line"> <span class="keyword">return</span>;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> MainActivity.m54(<span class="string">&quot;/storage/emulated/0/keymi&quot;</span>, <span class="string">&quot;&quot;</span> + editText.getText().toString());</span><br><span class="line"></span><br><span class="line"> Toast.makeText(context, <span class="string">&quot;正在登录等待几秒即可&quot;</span>, <span class="number">0</span>).show();</span><br><span class="line"></span><br><span class="line"> <span class="type">String</span> <span class="variable">kami</span> <span class="operator">=</span> editText.getText().toString();</span><br><span class="line"></span><br><span class="line"> <span class="type">String</span> <span class="variable">Mac</span> <span class="operator">=</span> MainActivity.getAndroidId(context);</span><br><span class="line"></span><br><span class="line"> MainActivity.kami(kami);</span><br><span class="line"></span><br><span class="line"> MainActivity.jima(Mac);</span><br><span class="line"></span><br><span class="line"> ShuanQUtil.<span class="type">ParamsUtil</span> <span class="variable">paramsUtil</span> <span class="operator">=</span> ShuanQUtil.getParamsUtil();</span><br><span class="line"></span><br><span class="line"> paramsUtil.putParam(<span class="string">&quot;card&quot;</span>, editText.getText().toString());</span><br><span class="line"></span><br><span class="line"> paramsUtil.putParam(<span class="string">&quot;machine_code&quot;</span>, MainActivity.getAndroidId(context));</span><br><span class="line"></span><br><span class="line"> Map&lt;String, String&gt; param = paramsUtil.getParams();</span><br><span class="line"></span><br><span class="line"> System.out.println(<span class="string">&quot;登录原生请求参数：&quot;</span> + paramsUtil.getParamsOriginal().toString());</span><br><span class="line"></span><br><span class="line"> System.out.println(<span class="string">&quot;登录实际请求参数：&quot;</span> + paramsUtil.getParams().toString());</span><br><span class="line"></span><br><span class="line"> OkhttpUtil.okHttpPost(<span class="string">&quot;http://xx.xx.xxx.xxx:xxxxxx/api/card_app/check&quot;</span>, param, <span class="keyword">new</span> <span class="title class_">CallBackUtil</span>.CallBackString() &#123; <span class="comment">// from class: com.xxxx.xxx.MainActivity.1.1</span></span><br><span class="line"></span><br><span class="line"> <span class="meta">@Override</span> <span class="comment">// com.xxxx.xxx.common.okhttp.CallBackUtil</span></span><br><span class="line"></span><br><span class="line"> <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">onFailure</span><span class="params">(Call call, Exception e)</span> &#123;</span><br><span class="line"></span><br><span class="line"> Toast.makeText(context, <span class="string">&quot;登录请求失败请检测网络是否异常&quot;</span>, <span class="number">0</span>).show();</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> <span class="meta">@Override</span> <span class="comment">// com.xxxx.xxx.common.okhttp.CallBackUtil</span></span><br><span class="line"></span><br><span class="line"> <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">onResponse</span><span class="params">(String response)</span> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">try</span> &#123;</span><br><span class="line"></span><br><span class="line"> <span class="type">JSONObject</span> <span class="variable">object</span> <span class="operator">=</span> JSON.parseObject(response);</span><br><span class="line"></span><br><span class="line"> <span class="keyword">if</span> (!object.isEmpty() &amp;&amp; (object.getString(<span class="string">&quot;code&quot;</span>).equals(<span class="string">&quot;1&quot;</span>) || object.getString(<span class="string">&quot;code&quot;</span>).equals(<span class="string">&quot;10000&quot;</span>))) &#123;</span><br><span class="line"></span><br><span class="line"> <span class="type">String</span> <span class="variable">dataOriginal</span> <span class="operator">=</span> object.getString(RemoteMessageConst.DATA);</span><br><span class="line"></span><br><span class="line"> <span class="type">String</span> <span class="variable">dataJson</span> <span class="operator">=</span> ShuanQUtil.dataDecrypt(dataOriginal);</span><br><span class="line"></span><br><span class="line"> <span class="type">JSONObject</span> <span class="variable">data</span> <span class="operator">=</span> JSON.parseObject(dataJson);</span><br><span class="line"></span><br><span class="line"> data.getJSONObject(<span class="string">&quot;cardInfo&quot;</span>);</span><br><span class="line"></span><br><span class="line"> data.getJSONObject(<span class="string">&quot;surplusTime&quot;</span>);</span><br><span class="line"></span><br><span class="line"> <span class="type">String</span> <span class="variable">expireTimeStr</span> <span class="operator">=</span> data.getString(<span class="string">&quot;expireTimeStr&quot;</span>);</span><br><span class="line"></span><br><span class="line"> Toast.makeText(context, <span class="string">&quot;登录成功 到期时间:&quot;</span> + expireTimeStr, <span class="number">0</span>).show();</span><br><span class="line"></span><br><span class="line"> <span class="type">Intent</span> <span class="variable">intent</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Intent</span>();</span><br><span class="line"></span><br><span class="line"> intent.setClassName(BuildConfig.APPLICATION_ID, <span class="string">&quot;com.epicgames.ue4.SplashActivity&quot;</span>);</span><br><span class="line"></span><br><span class="line"> context.startActivity(intent);</span><br><span class="line"></span><br><span class="line"> <span class="type">Intent</span> <span class="variable">mIntent</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Intent</span>(context, FloatingModMenuService.class);</span><br><span class="line"></span><br><span class="line"> context.startService(mIntent);</span><br><span class="line"></span><br><span class="line"> MainActivity.alertDialogss.dismiss();</span><br><span class="line"></span><br><span class="line"> <span class="keyword">return</span>;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> Toast.makeText(context, <span class="string">&quot;登录失败1&quot;</span> + object.getString(<span class="string">&quot;message&quot;</span>), <span class="number">0</span>).show();</span><br><span class="line"></span><br><span class="line"> &#125; <span class="keyword">catch</span> (Exception e) &#123;</span><br><span class="line"></span><br><span class="line"> e.printStackTrace();</span><br><span class="line"></span><br><span class="line"> Toast.makeText(context, <span class="string">&quot;登录失败2&quot;</span> + e.getMessage(), <span class="number">0</span>).show();</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> &#125;);</span><br><span class="line"></span><br><span class="line"> &#125;</span><br><span class="line"></span><br><span class="line"> &#125;);</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>这段代码通过匿名内部类的方式定义了点击事件监听器：</p>
+<p>1.当用户点击名为 recharge 的视图时，将触发这个点击事件监听器，使用 OkhttpUtil 类的静态方法 okHttpPost() 发送一个 POST 请求，并传入参数。</p>
+<p>2.在请求的回调方法中，首先检查响应的数据。如果数据不为空且包含特定的代码（code），则执行以下操作：</p>
+<p>解析响应数据，并获取到期时间字符串。显示一个 “登录成功，到期时间：” 的提示消息，并启动com.epicgames.ue4.SplashActivity”，并关闭一个对话框。</p>
+<p>3.如果响应数据中的 code 不符合预期，则显示一个相应的错误提示消息。</p>
+<p>java层的验证很容易过，把登录失败的处理都跳转到登录成功即可，但是跳过验证之后发现游戏确实有悬浮窗了但是里面功能都是无效的。</p>
+<p>再回看一下上面这段代码，分析后发现MainActivity.kami(kami)和MainActivity.jima(Mac)都是调用的native注册的函数，通过当前Activity里System.loadLibrary(“xxx”);即可定位所用的libxxx.so。接下来就需要去native分析验证逻辑</p>
+<h3 id="0x1-Native层的登录验证分析"><a href="#0x1-Native层的登录验证分析" class="headerlink" title="0x1 Native层的登录验证分析"></a>0x1 Native层的登录验证分析</h3><p>进到native发现好像跟kami和jima没啥关系，这两个只是单纯的jason转换成cstr和获取机器码而已，然后经过分析发现真正验证的地方是在刚才启动的这个服务Intent mIntent &#x3D; new Intent(context, FloatingModMenuService.class);里注册的native函数intt进行验证和解密。</p>
+<p><img src="https://attach.52pojie.cn/forum/202405/11/105734o9ncncglh666t1ay.png"></p>
+<p>这个玩意就是外挂的初始化函数了，经过分析，Z9___v里是hook的dlsym，只允许去访问指定的符号。bulletTrackHook里是通过hook游戏里的calcshoot实现的子弹追踪</p>
+<p>CNM(),CNM1(),CNM2(),_Z10__kamiv()就是验证相关的函数，里面都长得很像，大概逻辑是把需要发送的报文（有验证服务器状态的，验证卡密的等）通过各种乱七八糟的与异或，然后调RC4加密函数加密后发送给服务器，然后接收服务器响应回来的值，再通过加密反过来的步骤解密一次。 最后可以得到服务器返回的验证结果以及一些游戏外挂功能相关的初始化参数。比较坑的是他后两个函数是一定要验证通过之后才会跟着cardtoken一起返回的，所以单纯在native过掉验证还是没效果，不过只要买一次卡密就能通过hook RC4Decrpt获取到他所有的游戏外挂功能相关的初始化参数的具体数值，只要手动去初始化这些全局变量就有功能了。</p>
+<p>RC4Decrpt的部分输出：</p>
+<p><img src="https://attach.52pojie.cn/forum/202405/11/105740hy143pp3ao7i1dot.png"></p>
+<p>content里就是服务器返回的数值</p>
+<h3 id="0x2-小结"><a href="#0x2-小结" class="headerlink" title="0x2 小结"></a>0x2 小结</h3><p>以上，实现了过卡密验证 ，以及分析出了他实现外g功能修改读取和hook的地方</p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2024/05/10/52pojie-1922628-%E8%AE%B0%E5%BD%95%E4%B8%80%E6%AC%A1%E6%9F%90%E6%89%8B%E6%B8%B8%E5%A4%96g%E7%99%BB%E5%BD%95%E9%AA%8C%E8%AF%81%E7%B3%BB%E7%BB%9F%E5%8F%8A%E9%83%A8%E5%88%86%E5%8A%9F%E8%83%BD%E5%AE%9E%E7%8E%B0%E7%9A%84%E9%80%86%E5%90%91%E5%88%86%E6%9E%90/">https://brszzz.github.io/2024/05/10/52pojie-1922628-%E8%AE%B0%E5%BD%95%E4%B8%80%E6%AC%A1%E6%9F%90%E6%89%8B%E6%B8%B8%E5%A4%96g%E7%99%BB%E5%BD%95%E9%AA%8C%E8%AF%81%E7%B3%BB%E7%BB%9F%E5%8F%8A%E9%83%A8%E5%88%86%E5%8A%9F%E8%83%BD%E5%AE%9E%E7%8E%B0%E7%9A%84%E9%80%86%E5%90%91%E5%88%86%E6%9E%90/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Java/">Java</a><a class="post-meta__tags" href="/tags/%E6%B3%A8%E5%85%A5%E6%8A%80%E6%9C%AF/">注入技术</a><a class="post-meta__tags" href="/tags/Hook/">Hook</a><a class="post-meta__tags" href="/tags/Unreal/">Unreal</a><a class="post-meta__tags" href="/tags/%E5%A4%96%E6%8C%82%E5%88%86%E6%9E%90/">外挂分析</a><a class="post-meta__tags" href="/tags/%E6%B8%B8%E6%88%8F%E5%AE%89%E5%85%A8/">游戏安全</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related full-width" href="/2024/11/01/52pojie-1977664-KernelPatchModule%E5%BC%80%E5%8F%91%E5%AD%A6%E4%B9%A0-%E7%BC%96%E8%AF%91kpm%E5%A6%82%E4%BD%95%E8%BF%9B%E8%A1%8C%E5%86%85%E6%A0%B8hook/" title="KernelPatchModule开发学习-编译kpm、如何进行内核hook"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">KernelPatchModule开发学习-编译kpm、如何进行内核hook</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  随着安卓逆向研究已经开始进入内核时代，现在内核相关的开发软件和资料也是越来越多。最近发现apatch的kpm挺好用的，不依赖内核源码，编译也很方便，还有现成的几种内核hook方式。但是在学习的过程中发现目前相关资料还是比较少，于是想用文章记录一下自己的学习过程。  **0x1 ****简介、****环境**  什么是KernelPatchModule？  官网的简</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2025/01/01/52pojie-1952349-%E5%AE%89%E5%8D%93%E6%9F%90%E6%B3%A8%E5%85%A5%E7%B1%BB%E5%A4%96%E6%8C%82%E8%84%B1%E5%A3%B3%E5%92%8C%E5%8A%9F%E8%83%BD%E5%88%86%E6%9E%90%E4%B8%8B/" title="安卓某注入类外挂脱壳和功能分析—下"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">安卓某注入类外挂脱壳和功能分析—下</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  目前已经定位到动态库了，现在就来看看里面的功能逻辑是咋写的，这个环节的话其实跟reverse感觉关系已经不大了，更多的是需要对UE4引擎的理解。今天花了点时间，结合dump的游戏SDK、libUE4,把这个文件里的一些函数和变量名给还原了出来。  **0x1 找到入口函数**  1.首先是要定位到它的入口函数，一般来说动态库会用__attribute__((const</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1970445-%E6%9F%90%E5%86%85%E6%B5%8B%E4%B8%AD%E6%8B%B3%E5%A4%B4%E5%85%AC%E5%8F%B8%E7%9A%84fps%E6%89%8B%E6%B8%B8GName%E7%AE%97%E6%B3%95%E9%80%86%E5%90%91/" title="某内测中拳头公司的fps手游GName算法逆向"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">某内测中拳头公司的fps手游GName算法逆向</div></div><div class="info-2"><div class="info-item-1">**0x0 序言**  前段时间研究了一下某游戏的GName算法，水一篇文章记录一下，以下简称该游戏为C手游。  **0x1 静态分析**  首先先dump并修复libUE4.so，拖进ida看一下。ida解析完成后，搜ByteProperty，找到引用的函数。  ![](https://attach.52pojie.cn/forum/202410/08/113834y9dsxodyjo5q</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1980334-N1CTF-reverse-ezapk-wp/" title="N1CTF-reverse-ezapk wp"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">N1CTF-reverse-ezapk wp</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  前几天忙别的去了，完全忘了N1CTF，今天想着看看题学习一下，先只下了个最简单的ezapk，结果晚上网站直接关服务器，下不了其他题了。。  这个是入门题，无混淆，反调和检测，flag格式为n1ctf{xxxxxxxxxxxxxxxxxxxxx}  **0x1 frida+jadx、ida静态分析**  我这台手机ida动调不知道为啥一直用不了，所以这里只用frida</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1951947-%E5%AE%89%E5%8D%93%E6%9F%90%E6%B3%A8%E5%85%A5%E7%B1%BB%E5%A4%96%E6%8C%82%E8%84%B1%E5%A3%B3%E5%92%8C%E5%8A%9F%E8%83%BD%E5%88%86%E6%9E%90%E4%B8%8A/" title="安卓某注入类外挂脱壳和功能分析—上"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">安卓某注入类外挂脱壳和功能分析—上</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  今天看到了一个某手游的注入类外挂样本，目标是[脱壳](https://www.52pojie.cn/forum-5-1.html)和加密流程的分析，以及分析出外挂实现功能修改的地方，此篇仅作为学习记录。  **0x1 GZIP加密**  首先，这个样本本体是一个500kb的sh文件，拖到ida里提示是二进制文件。于是用everedit打开这个文件看一眼，发现开头有这个</div></div></div></a><a class="pagination-related" href="/2024/11/18/52pojie-1983132-N1CTF-Reverse-Attachment-%E9%A2%98%E8%A7%A3/" title="N1CTF-Reverse-Attachment 题解"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2024-11-18</div><div class="info-item-2">N1CTF-Reverse-Attachment 题解</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  这道题根据出题人说，目前是只在安卓12和14上验证过，其他的系统可能会有问题，我刚开始是在mi11 安卓13上做的，输入假的flag依旧会弹出正确提示。猜测是frida hook java方法的时候某个地方出了问题，他是成功把callRabbit转换为jni函数并通过art_quick_generic_jni_trampoline调用，但可能entry_point_fro</div></div></div></a><a class="pagination-related" href="/2025/01/01/52pojie-1956314-%E4%BD%BF%E7%94%A8ebpf%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93%E6%9F%90elf%E5%8A%A0%E5%AF%86%E6%A0%B7%E6%9C%AC/" title="使用ebpf分析安卓某elf加密样本"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2025-01-01</div><div class="info-item-2">使用ebpf分析安卓某elf加密样本</div></div><div class="info-2"><div class="info-item-1">**0x0 前言**  今天记录一次对某安卓elf文件的加密分析的流程和使用ebpf的思路。  工具设备：  1.mi12 安卓12 内核5.10.136  2.stackplz  **0x1 十六进制dump（xxd）**  首先这个样本有两个文件，一个是elf可执行文件的启动器，一个是不知道什么格式的文件  ![](https://attach.52pojie.cn/forum/20</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">22</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">86</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER<br>qq:2132152966</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-3"><a class="toc-link" href="#0x0-JAVA%E5%B1%82%E7%9A%84%E7%99%BB%E5%BD%95%E9%AA%8C%E8%AF%81%E5%88%86%E6%9E%90"><span class="toc-number">1.</span> <span class="toc-text">0x0 JAVA层的登录验证分析</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#0x1-Native%E5%B1%82%E7%9A%84%E7%99%BB%E5%BD%95%E9%AA%8C%E8%AF%81%E5%88%86%E6%9E%90"><span class="toc-number">2.</span> <span class="toc-text">0x1 Native层的登录验证分析</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#0x2-%E5%B0%8F%E7%BB%93"><span class="toc-number">3.</span> <span class="toc-text">0x2 小结</span></a></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原">DSVM 逆向工程：从 OLLVM 误判到领域特定虚拟机的完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E9%9B%B6%E6%90%AD%E5%BB%BA%E4%B8%80%E4%B8%AA%E6%8A%80%E6%9C%AF%E5%8D%9A%E5%AE%A2%E2%80%94%E2%80%94Hexo-Butterfly%E4%B8%BB%E9%A2%98%E6%B7%B1%E5%BA%A6%E5%AE%9A%E5%88%B6%E5%AE%9E%E5%BD%95/" title="从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录">从零搭建一个技术博客——Hexo + Butterfly 主题深度定制实录</a><time datetime="2026-05-29T14:00:00.000Z" title="发表于 2026-05-29 22:00:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/29/%E4%BB%8E%E8%A7%84%E5%88%99%E5%88%B0%E5%81%8F%E5%A5%BD%EF%BC%9A%E7%94%A8%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0%E5%81%9A%E6%B8%B8%E6%88%8F%E7%9B%B4%E6%92%AD%E5%88%87%E7%89%87%E7%9A%84%E6%8A%80%E6%9C%AF%E4%B8%8E%E5%AE%9E%E8%B7%B5/" title="从规则到偏好——用强化学习做游戏直播AI切片">从规则到偏好——用强化学习做游戏直播AI切片</a><time datetime="2026-05-29T07:30:00.000Z" title="发表于 2026-05-29 15:30:00">2026-05-29</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</a><time datetime="2026-05-25T04:00:00.000Z" title="发表于 2026-05-25 12:00:00">2026-05-25</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/25/douyu-ai-analysis-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3/" title="斗鱼直播 AI 分析系统 — 项目文档">斗鱼直播 AI 分析系统 — 项目文档</a><time datetime="2026-05-25T02:40:00.000Z" title="发表于 2026-05-25 10:40:00">2026-05-25</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>
