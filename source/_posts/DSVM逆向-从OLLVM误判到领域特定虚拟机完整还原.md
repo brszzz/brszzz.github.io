@@ -1,5 +1,5 @@
 ---
-title: 领域特定虚拟机DSVM完整还原
+title: 领域特定虚拟机DSVM指令完整还原
 date: 2026-06-21 12:00:00
 tags:
   - ARM64
