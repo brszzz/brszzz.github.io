@@ -88,5 +88,5 @@ search:
 # Deployment
 deploy:
   type: git
-  repo: git@github.com:brszzz/brszzz.github.io.git
+  repo: https://github.com/brszzz/brszzz.github.io.git
   branch: gh-pages
