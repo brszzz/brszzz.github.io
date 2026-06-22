@@ -161,6 +161,9 @@ body {
 #settings-panel input[type="range"] {
     flex: 1; accent-color: #4ecdc4; height: 3px; cursor: pointer;
 }
+#settings-panel input[type="checkbox"] {
+    accent-color: #4ecdc4; cursor: pointer;
+}
 #settings-panel select {
     background: #2a2a2a; color: #ddd; border: 1px solid #444;
     border-radius: 4px; padding: 2px 6px; font-size: 12px;
@@ -244,6 +247,10 @@ body {
                 <input type="range" id="setting-offset" min="-30" max="30" value="0" step="0.5">
                 <span class="val" id="val-offset">0s</span>
             </div>
+            <div class="setting-row">
+                <label>显示时间</label>
+                <input type="checkbox" id="setting-showtime">
+            </div>
         </div>
     </div>
 </div>
@@ -271,6 +278,8 @@ const state = {
     _estDuration: 0,
     _rebuilding: false,
     _pendingRebuild: null,
+    _rebuildSeekComp: false,
+    _seekResume: false,
     playerInitialized: false,
     resizeObserver: null,
 };
@@ -282,6 +291,7 @@ const settings = {
     position: 'full',      // 'full' | 'top' | 'middle' | 'bottom'
     offset: 0,             // seconds
     showDanmaku: true,
+    showDanmakuTime: false,
 };
 
 const DANMAKU_SPEED = 200;  // pixels per second scroll speed
@@ -429,6 +439,16 @@ function setupVideoEvents() {
     video.addEventListener('playing', () => loadingEl.classList.remove('active'));
     video.addEventListener('seeked', () => {
         state.isSeeking = false;
+        // Compensate for flv.js auto-seek after rebuild ("stuck at 0" detection)
+        if (state._rebuildSeekComp) {
+            state._rebuildSeekComp = false;
+            const pt = (state.flvPlayer && isFinite(state.flvPlayer.currentTime))
+                ? state.flvPlayer.currentTime : video.currentTime;
+            if (pt > 0.5) {
+                state._timeOffset -= pt;
+                updateTimeDisplay();
+            }
+        }
         onSeekComplete();
         loadingEl.classList.remove('active');
     });
@@ -583,6 +603,12 @@ async function loadDanmaku() {
             }
         }
 
+        // Normalize timestamps: recording tool outputs milliseconds, but some
+        // danmaku files may use seconds. Detect and convert to seconds uniformly.
+        const isMs = raw.length > 0 && raw[0].timestamp > 1e12;
+        const tsScale = isMs ? 1000 : 1;
+        for (const d of raw) d.timestamp = d.timestamp / tsScale;
+
         state.danmakuRaw = raw;
         state.videoStartTs = raw[0]?.timestamp || 0;
 
@@ -606,6 +632,7 @@ function applyDanmakuDensity() {
     if (settings.density >= 1) {
         state.danmakuAll = raw.map(d => ({
             ...d,
+            rawTime: d.timestamp - state.videoStartTs,
             videoTime: d.timestamp - state.videoStartTs + settings.offset,
         }));
     } else {
@@ -614,6 +641,7 @@ function applyDanmakuDensity() {
             if (Math.random() < settings.density) {
                 state.danmakuAll.push({
                     ...raw[i],
+                    rawTime: raw[i].timestamp - state.videoStartTs,
                     videoTime: raw[i].timestamp - state.videoStartTs + settings.offset,
                 });
             }
@@ -666,7 +694,8 @@ function spawnDanmaku(danmaku) {
     const laneCount = getLaneCount();
 
     ctx.font = `${settings.fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
-    const text = danmaku.content;
+    const prefix = settings.showDanmakuTime ? `[${formatTime(danmaku.rawTime)}] ` : '';
+    const text = prefix + danmaku.content;
     const textWidth = ctx.measureText(text).width;
 
     // Find the best lane: prefer empty, otherwise pick lane with most space
@@ -723,12 +752,10 @@ function spawnDanmaku(danmaku) {
 let lastDanmakuTs = 0;
 
 function danmakuLoop(timestamp) {
-    const dt = lastDanmakuTs ? Math.min((timestamp - lastDanmakuTs) / 1000, 0.1) : 1 / 60;
-    lastDanmakuTs = timestamp;
-
     if (!settings.showDanmaku) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        lastDanmakuTs = 0; // reset so next frame doesn't jump
+        // Redraw frozen danmaku even when hidden, in case they reappear
+        lastDanmakuTs = 0;
         requestAnimationFrame(danmakuLoop);
         return;
     }
@@ -745,8 +772,8 @@ function danmakuLoop(timestamp) {
 
     const currentTime = getCurrentTime();
 
-    // Spawn new danmaku
-    if (!state.isSeeking && state.danmakuAll.length > 0) {
+    // Spawn new danmaku (skip while paused or seeking)
+    if (!video.paused && !state.isSeeking && state.danmakuAll.length > 0) {
         while (
             state.danmakuIndex < state.danmakuAll.length &&
             state.danmakuAll[state.danmakuIndex].videoTime <= currentTime
@@ -756,29 +783,34 @@ function danmakuLoop(timestamp) {
         }
     }
 
-    // Update positions & draw
+    // Update positions only while playing; when paused, redraw at current positions
+    if (!video.paused) {
+        const dt = lastDanmakuTs ? Math.min((timestamp - lastDanmakuTs) / 1000, 0.1) : 1 / 60;
+        lastDanmakuTs = timestamp;
+
+        const activeAfterMove = [];
+        for (const d of state.danmakuActive) {
+            d.x -= DANMAKU_SPEED * dt;
+            if (d.x + d.textWidth >= -10) activeAfterMove.push(d);
+        }
+        state.danmakuActive = activeAfterMove;
+    } else {
+        lastDanmakuTs = 0;
+    }
+
+    // Always draw current state
     ctx.clearRect(0, 0, canvasW, canvasH);
     ctx.globalAlpha = settings.opacity;
     ctx.font = `${settings.fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
     ctx.textBaseline = 'top';
-
     ctx.lineWidth = Math.max(2, settings.fontSize / 8);
     ctx.strokeStyle = '#000';
     ctx.fillStyle = '#fff';
 
-    const active = [];
     for (const d of state.danmakuActive) {
-        d.x -= DANMAKU_SPEED * dt;
-
-        if (d.x + d.textWidth < 0) continue;
-
         ctx.strokeText(d.text, d.x, d.y);
         ctx.fillText(d.text, d.x, d.y);
-
-        active.push(d);
     }
-
-    state.danmakuActive = active;
     ctx.globalAlpha = 1;
 
     requestAnimationFrame(danmakuLoop);
@@ -836,6 +868,7 @@ function updateProgressBar() {
 }
 
 function updateTimeDisplay() {
+    if (isDragging) return;
     timeDisplay.textContent = formatTime(getCurrentTime()) + ' / ' + formatTime(getDuration());
 }
 
@@ -850,6 +883,7 @@ function seekTo(time) {
     }
 
     state.isSeeking = true;
+    state._rebuildSeekComp = false; // user-initiated seek, cancel rebuild compensation
     loadingEl.classList.add('active');
 
     // video.buffered is relative to the player timeline (0-based).
@@ -1033,6 +1067,9 @@ async function findFlvSyncPoint(file, approxByte) {
 async function rebuildPlayerAt(targetTime) {
     if (!state.flvFile || !state._flvHeader) return;
     state._rebuilding = true;
+    // Set offset immediately so getCurrentTime() is accurate during rebuild,
+    // preventing stale _pendingRebuild values from rapid key presses.
+    state._timeOffset = targetTime;
     console.log('Rebuilding player at', targetTime);
 
     // Calculate byte offset (approximate — assumes constant bitrate)
@@ -1109,20 +1146,19 @@ async function rebuildPlayerAt(targetTime) {
         state.isSeeking = false;
         loadingEl.classList.remove('active');
         state._rebuilding = false;
+        // Flag: next non-user seek (flv.js "stuck at 0" auto-seek) needs compensation
+        state._rebuildSeekComp = true;
 
         // Process any pending seek that arrived during rebuild
         if (state._pendingRebuild != null) {
             const pending = state._pendingRebuild;
             state._pendingRebuild = null;
-            setTimeout(() => seekTo(pending), 50);
+            setTimeout(() => seekTo(pending), 150);
         }
     });
 
     state.flvPlayer.attachMediaElement(video);
     state.flvPlayer.load();
-
-    // Offset: the new player's time 0 = targetTime in the original video
-    state._timeOffset = targetTime;
 
     // Reset danmaku to match new position
     state.danmakuActive = [];
@@ -1367,6 +1403,11 @@ settingOffset.addEventListener('input', () => {
     }
 });
 
+const settingShowTime = $('setting-showtime');
+settingShowTime.addEventListener('change', () => {
+    settings.showDanmakuTime = settingShowTime.checked;
+});
+
 // ============================================================
 // Keyboard Shortcuts
 // ============================================================
@@ -1395,10 +1436,12 @@ document.addEventListener('keydown', (e) => {
             break;
         case 'ArrowLeft':
             e.preventDefault();
+            if (!e.repeat && !video.paused) { video.pause(); state._seekResume = true; }
             seekTo(getCurrentTime() - 5);
             break;
         case 'ArrowRight':
             e.preventDefault();
+            if (!e.repeat && !video.paused) { video.pause(); state._seekResume = true; }
             seekTo(getCurrentTime() + 5);
             break;
         case 'ArrowUp':
@@ -1423,6 +1466,15 @@ document.addEventListener('keydown', (e) => {
                 playerContainer.requestFullscreen();
             }
             break;
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+        if (state._seekResume) {
+            state._seekResume = false;
+            video.play().catch(() => {});
+        }
     }
 });
 

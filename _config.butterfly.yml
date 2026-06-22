@@ -87,7 +87,7 @@ aside:
       link: https://github.com/brszzz
   card_announcement:
     enable: true
-    content: 'BLACK★ROCK SHOOTER<br>qq:2132152966'
+    content: 'BLACK★ROCK SHOOTER'
   card_categories:
     enable: true
     limit: 8
@@ -101,6 +101,10 @@ aside:
     enable: true
     post_count: true
     last_push_date: true
+
+# TOC
+toc:
+  number: false
 
 # Post display
 index_post_content:
