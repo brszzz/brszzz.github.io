@@ -1,0 +1,605 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="从一个被 Clang LTO 全 unroll 编译爆体积的 93KB UE4 函数出发，先把误判为 OLLVM 的 FName::LookupOrAdd 还原为正常逻辑，再逐 case 抓出 FName 字符串的 9 路异或解密算法（窄路径 + 宽路径），最后定位 g_FNamePool 全局变量并落到可用于内存读取的 C++ 代码。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程">
+<meta property="og:url" content="https://brszzz.github.io/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="从一个被 Clang LTO 全 unroll 编译爆体积的 93KB UE4 函数出发，先把误判为 OLLVM 的 FName::LookupOrAdd 还原为正常逻辑，再逐 case 抓出 FName 字符串的 9 路异或解密算法（窄路径 + 宽路径），最后定位 g_FNamePool 全局变量并落到可用于内存读取的 C++ 代码。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2026-06-17T16:00:00.000Z">
+<meta property="article:modified_time" content="2026-06-23T11:49:48.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="游戏安全">
+<meta property="article:tag" content="ARM64">
+<meta property="article:tag" content="IDA Pro">
+<meta property="article:tag" content="Unreal Engine 4">
+<meta property="article:tag" content="FName">
+<meta property="article:tag" content="逆向分析">
+<meta property="article:tag" content="LTO">
+<meta property="article:tag" content="NEON">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程",
+  "url": "https://brszzz.github.io/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2026-06-17T16:00:00.000Z",
+  "dateModified": "2026-06-23T11:49:48.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">35</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">132</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div><div class="menus_item"><a class="site-page" href="/video-player/"><i class="fa-fw fas fa-play"></i><span> video player</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div><div class="menus_item"><a class="site-page" href="/video-player/"><i class="fa-fw fas fa-play"></i><span> video player</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-06-17T16:00:00.000Z" title="发表于 2026-06-18 00:00:00">2026-06-18</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-23T11:49:48.000Z" title="更新于 2026-06-23 19:49:48">2026-06-23</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E7%BC%96%E7%A8%8B%E5%BC%80%E5%8F%91/">编程开发</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">72k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>4:23分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h2 id="0x0-起因"><a href="#0x0-起因" class="headerlink" title="0x0 起因"></a>0x0 起因</h2><p>本篇文章分析一个 <code>E:\xxx_global\libUE4.so</code>（某款 UE4 手游的客户端库），首先找GName，根据BytePorperty交叉引用，找到了 <code>0xDB35E14</code> 这个函数，发现这个跟常规的FNamepool算法不太一样，像是什么混淆。第一眼数据吓人：</p>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>函数大小</td>
+<td>93 356 字节</td>
+</tr>
+<tr>
+<td>基本块数</td>
+<td>3 965</td>
+</tr>
+<tr>
+<td>圈复杂度</td>
+<td>2 034</td>
+</tr>
+<tr>
+<td>调用者</td>
+<td>128</td>
+</tr>
+<tr>
+<td>内嵌字符串</td>
+<td><code>&quot;None&quot;</code>、<code>&quot;N0ne&quot;</code>、<code>&quot;Nome&quot;</code>、<code>&quot;SHVector&quot;</code>、<code>&quot;Color&quot;</code>、<code>&quot;Plane&quot;</code> 等</td>
+</tr>
+</tbody></table>
+<p>这个体量在 UE4 库里足够引人警惕：典型 OLLVM 平坦化函数也就是几千块。而且函数体里到处是「12 字节绕路块」、<code>byte_xxx</code> 形态的字节比较、以及看起来像 opaque predicate 的两路分支……</p>
+<p>但只要静下心来跟着汇编走，会发现<strong>它一行混淆都没有</strong>。这篇文章把整个还原过程分阶段写出来，覆盖三件事：</p>
+<ol>
+<li>把”看起来像混淆的东西”拆掉，确认它就是 <code>FName::LookupOrAdd</code> 一次性初始化 + 查找&#x2F;插入路径的 LTO 全展开版本；</li>
+<li>顺手把 UE4 在这个 .so 里用的 <strong>9-case FName 字符串异或加密</strong>（窄&#x2F;宽双路径）逐字节还原；</li>
+<li>把全局变量 <code>g_FNamePool</code> 钉死在哪个地址、怎么从 <code>NameId</code> 反查到 entry 字节，给出可直接用于跨进程读内存的 C++。</li>
+</ol>
+<blockquote>
+<p>全程使用 IDA Pro + IDA MCP，<strong>不依赖 Hex-Rays 反编译</strong>——所有结论从 disasm + helper 函数身份匹配得到。</p>
+</blockquote>
+<h2 id="0x1-第一轮误判：OLLVM？"><a href="#0x1-第一轮误判：OLLVM？" class="headerlink" title="0x1 第一轮误判：OLLVM？"></a>0x1 第一轮误判：OLLVM？</h2><p>第一次速读，给自己挖了个坑。函数特征看起来全中混淆：</p>
+<ul>
+<li><strong>「巨大 dispatcher」</strong>：<code>0xDB36688</code> 是个频繁被跳到的地方，像极了 CFF 的 dispatcher 头；</li>
+<li><strong>「成对绕路块」</strong>：每个 case 后面都跟一段 12 字节短块再跳回，像 Bogus Control Flow；</li>
+<li><strong>「opaque predicate」</strong>：一些路径前面要先 <code>LDRB Wn, [bss byte]; CBZ Wn, ...</code>，bss 字节默认为 0，看似永远走一边；</li>
+<li><strong>「字符串扰动」</strong>：<code>&quot;N0ne&quot;</code>&#x2F;<code>&quot;Nome&quot;</code> 在 <code>&quot;None&quot;</code> 旁边出现，像在做字符串混淆。</li>
+</ul>
+<p>按这个看法可以洋洋洒洒写一段「OLLVM 平坦化 + Bogus + Opaque」的报告。但接下来逐项验证就被打脸：</p>
+<h3 id="1-1-0xDB36688-不是-dispatcher，是函数-epilogue"><a href="#1-1-0xDB36688-不是-dispatcher，是函数-epilogue" class="headerlink" title="1.1 0xDB36688 不是 dispatcher，是函数 epilogue"></a>1.1 <code>0xDB36688</code> 不是 dispatcher，是函数 epilogue</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">db36688  LDR    X8, [X24, #0x28]      ; 取栈金丝雀</span><br><span class="line">db3668c  LDUR   X9, [X29, #var_10]    ; 取栈上保存的金丝雀</span><br><span class="line">db36690  CMP    X8, X9</span><br><span class="line">db36694  B.NE   __stack_chk_fail</span><br><span class="line">...</span><br><span class="line">db366b8  RET</span><br></pre></td></tr></table></figure>
+
+<p>这是 AArch64 标配的 stack canary check + 寄存器恢复 + <code>RET</code>。所有”跳到 dispatcher”的边都是函数自然结束的边——只是因为函数太大，IDA CFG 把所有 return 边都画到这一个块上了。</p>
+<h3 id="1-2-那些-bss-字节是-cxa-guard"><a href="#1-2-那些-bss-字节是-cxa-guard" class="headerlink" title="1.2 那些 bss 字节是 __cxa_guard"></a>1.2 那些 bss 字节是 <code>__cxa_guard</code></h3><p>挑一个观察：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">db366bc  ADRL   X0, byte_1BACA1C0</span><br><span class="line">db366c4  BL     sub_ECD0C74        ; ?</span><br><span class="line">db366c8  CBZ    W0, ...</span><br><span class="line">...</span><br><span class="line">db366f8  BL     sub_ECD0C80        ; ?</span><br></pre></td></tr></table></figure>
+
+<p><code>sub_ECD0C74</code> 的 PLT 跳板很短，进去到 stub 里立刻能看出原型 &#x3D; <code>int __cxa_guard_acquire(uint64_t* guard)</code>——典型 Itanium C++ ABI 静态局部变量初始化守门函数。<code>sub_ECD0C80</code> 对应 <code>__cxa_guard_release</code>。这对函数不是混淆而是<strong>C++ static local 一次性初始化</strong>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">if (acquire(&amp;guard)) &#123;</span><br><span class="line">    // 真正的初始化代码</span><br><span class="line">    release(&amp;guard);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>那个被认为是 opaque predicate 的 byte 是 guard 字节，初始为 0，第一次进入设为 1，所以<strong>第一次执行走真正初始化分支，之后永远走快路径</strong>——和 opaque predicate 形态一样，但语义完全不同。</p>
+<h3 id="1-3-「成对短块」是-LTO-的展开-异常重入-trampoline"><a href="#1-3-「成对短块」是-LTO-的展开-异常重入-trampoline" class="headerlink" title="1.3 「成对短块」是 LTO 的展开 + 异常重入 trampoline"></a>1.3 「成对短块」是 LTO 的展开 + 异常重入 trampoline</h3><p>每个 12 字节”绕路块”看清楚都是：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">loc_xxx:</span><br><span class="line">   BL    sub_1093DD48              ; 内部又调一层 __cxa_guard 拿 GMalloc*</span><br><span class="line">   B     主流</span><br></pre></td></tr></table></figure>
+
+<p>是 GCC&#x2F;Clang 异常路径接回主流的样板代码——LTO 把”取全局单例”这种很普通的事情也给 inline 进来了，于是产生大量这种重入跳板。</p>
+<h3 id="1-4-N0ne-Nome-是-NAME-None-哨兵"><a href="#1-4-N0ne-Nome-是-NAME-None-哨兵" class="headerlink" title="1.4 &quot;N0ne&quot; &#x2F; &quot;Nome&quot; 是 NAME_None 哨兵"></a>1.4 <code>&quot;N0ne&quot;</code> &#x2F; <code>&quot;Nome&quot;</code> 是 <code>NAME_None</code> 哨兵</h3><p>UE4 源码本来就这样写。FNamePool 里 0 号项是 <code>None</code>，比较时为了区分”未初始化”和”真的是 None”，引擎内有 <code>&quot;N0ne&quot;</code>（数字 0）这种内部 sentinel 字串。和混淆无关。</p>
+<h3 id="1-5-真正的本质：LTO-全-unroll"><a href="#1-5-真正的本质：LTO-全-unroll" class="headerlink" title="1.5 真正的本质：LTO + 全 unroll"></a>1.5 真正的本质：LTO + 全 unroll</h3><p>函数体 <code>0xDB35EC4..0xDB360EC</code> 这一段非常工整：每隔 0x80 步距，做一组 <code>pthread_rwlock_init</code> + 一组 <code>STP XZR/STR XZR</code> 清零。整整 16 组。换句话说——</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="type">int</span> i = <span class="number">0</span>; i &lt; <span class="number">16</span>; ++i) &#123;</span><br><span class="line">    <span class="built_in">pthread_rwlock_init</span>(&amp;buckets[i].lock, <span class="literal">NULL</span>);</span><br><span class="line">    <span class="built_in">memset</span>(&amp;buckets[i].data, <span class="number">0</span>, <span class="number">0x40</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>被 Clang 全部 unroll 了。这就是所谓的”巨大函数”的真相。</p>
+<p>汇编里另一段长得像加密的代码：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">... BL  sysinfo_ut</span><br><span class="line">... LSR ... LSR ... CSEL ...</span><br><span class="line">... 一串只跟 totalram 相关的位操作 ...</span><br></pre></td></tr></table></figure>
+
+<p>实际是 <code>ceil_log2(totalRAM * mem_unit)</code> 算 hash 桶容量初值——把整个 <code>__lzcnt</code> 风格做 unsigned ceil-log2 的代码片段也展开了。</p>
+<p>到这里第一阶段闭合：函数不是混淆，是 <strong><code>FName::LookupOrAdd</code> 首次初始化 + 查找&#x2F;插入全路径</strong>，被 LTO 完全展开。</p>
+<h2 id="0x2-第二轮：把-FNamePool-布局抠出来"><a href="#0x2-第二轮：把-FNamePool-布局抠出来" class="headerlink" title="0x2 第二轮：把 FNamePool 布局抠出来"></a>0x2 第二轮：把 FNamePool 布局抠出来</h2><p>误判修正后，下一步是把数据结构钉死。看那个 16 桶 unroll 块的第一组：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">db35edc  ADRL   X23, unk_1BB53A80          ; FNamePool 基址</span><br><span class="line">db35ee8  STR    X0, [X23, #0x38]           ; pool-&gt;stringPool = GMalloc-&gt;Malloc(0x80000)</span><br><span class="line">db35ef4  ADD    X8, X23, #0x10,LSL#12      ; X8 = pool + 0x10000</span><br><span class="line">db35efc  ADD    X0, X8, #0x80              ; X0 = pool + 0x10080  → bucket[0].lock</span><br><span class="line">db35f08  BL     pthread_rwlock_init_ut     ; init(&amp;bucket[0].lock, NULL)</span><br></pre></td></tr></table></figure>
+
+<p>接下来同款代码每组步进 <code>+0x80</code> 做 16 次。整个 FNamePool 长这样：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">FNameHashBucket</span> &#123;</span>            <span class="comment">// 0x80 字节</span></span><br><span class="line">    <span class="type">pthread_rwlock_t</span> lock;          <span class="comment">// +0x00..0x38  (Bionic 是 0x38)</span></span><br><span class="line">    <span class="type">uint32_t</span> cursor;                <span class="comment">// +0x38  arena 写入游标</span></span><br><span class="line">    <span class="type">uint32_t</span> mask;                  <span class="comment">// +0x3C  hash 表大小 - 1</span></span><br><span class="line">    <span class="type">void</span>*    hashTable;             <span class="comment">// +0x40  uint32_t[mask+1] 槽数组</span></span><br><span class="line">    <span class="type">void</span>*    entryArena;            <span class="comment">// +0x48  arena slot 数组基址</span></span><br><span class="line">    <span class="comment">/* +0x4C..0x7F 各种 SoA 统计字段 */</span></span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">FNamePool</span> &#123;</span></span><br><span class="line">    <span class="type">uint8_t</span>        pad_0[<span class="number">0x10038</span>];</span><br><span class="line">    <span class="type">void</span>*          stringPool;      <span class="comment">// +0x10038  GMalloc 给的 0x80000 字符串池</span></span><br><span class="line">    <span class="type">uint32_t</span>       stringPoolUsed;  <span class="comment">// +0x10050</span></span><br><span class="line">    <span class="type">uint32_t</span>       stringPoolReserve;<span class="comment">// +0x10054</span></span><br><span class="line">    <span class="type">uint8_t</span>        pad_1[<span class="number">0x2C</span>];</span><br><span class="line">    FNameHashBucket buckets[<span class="number">16</span>];    <span class="comment">// +0x10080，stride 0x80</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>值得强调的两点：</p>
+<ol>
+<li><strong><code>unk_1BB53A80</code> 不是指针变量，是结构体本体的 BSS 起点</strong>。代码里直接 <code>ADRL X23, unk_1BB53A80</code> 拿地址，没有 <code>LDR X23, [X23]</code> 这种解引用动作。所以 <code>g_FNamePool = libUE4.so 模块基址 + 0x1BB53A80</code>，<strong>不要再 deref</strong>。</li>
+<li><code>0x1BB53AB8</code> 这个被 IDA 起名 <code>qword_1BB53AB8</code> 的”独立全局变量”不是独立的——它是 pool 的 <code>+0x38</code> 成员（<code>stringPool</code> 指针）。dump 内存可以看到它的值落在堆地址段（高位 <code>0x7c…</code>），证明是 GMalloc 返回的池基址。</li>
+</ol>
+<p>把这些都改名标到 IDB 里：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">0x1BB53A80  unk_1BB53A80     →  g_FNamePool</span><br><span class="line">0x1BB53AB8  qword_1BB53AB8   →  g_FNamePool_StringPool</span><br><span class="line">0xDB35E14   sub_DB35E14      →  FName_StaticInit_LookupOrAdd</span><br><span class="line">0xDB4D45C   sub_DB4D45C      →  FName_CompareEntryChars</span><br><span class="line">0xDB4CE9C   sub_DB4CE9C      →  FName_HashString</span><br><span class="line">0xECD6574   sub_ECD6574      →  pthread_rwlock_init_ut</span><br><span class="line">0xECD0C74   sub_ECD0C74      →  cxa_guard_acquire_ut</span><br><span class="line">0xECD0C80   sub_ECD0C80      →  cxa_guard_release_ut</span><br><span class="line">... (其余 helper 也按标准库符号补齐)</span><br></pre></td></tr></table></figure>
+
+<h2 id="0x3-第三轮：FName-字符串加密的-9-路-case-算法逆向"><a href="#0x3-第三轮：FName-字符串加密的-9-路-case-算法逆向" class="headerlink" title="0x3 第三轮：FName 字符串加密的 9 路 case 算法逆向"></a>0x3 第三轮：FName 字符串加密的 9 路 case 算法逆向</h2><p>这一节是整个逆向最磨人的部分——FName entry 在池里<strong>不是明文存的</strong>，而是用一个由 <code>len</code> 派生的 key 异或过的字节流，且窄&#x2F;宽两条路径用了<strong>两份不同</strong>的 9-case 算法。下面分四步还原。</p>
+<h3 id="3-1-入口判别：怎么发现这是”9-case-派发”"><a href="#3-1-入口判别：怎么发现这是”9-case-派发”" class="headerlink" title="3.1 入口判别：怎么发现这是”9-case 派发”"></a>3.1 入口判别：怎么发现这是”9-case 派发”</h3><p>切入点不是 <code>FName_StaticInit_LookupOrAdd</code> 自己（93KB 太大），而是它在 hash 命中后会调的一个小函数 <code>sub_DB4D45C</code>（2.5KB &#x2F; 197 块），看起来像个比较器。disasm 它的 prologue：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">db4d48c  LDRH   W23, [X8],#2          ; header = *(u16*)entry; entry+=2</span><br><span class="line">db4d490  TBNZ   W23, #0, loc_DB4DCC0  ; if (header &amp; 1) goto wide_path  ← is_wide</span><br><span class="line">db4d494  LSR    X20, X23, #6          ; len = header &gt;&gt; 6</span><br></pre></td></tr></table></figure>
+
+<p>读到这里有 3 个先验信号：</p>
+<ol>
+<li><code>LDRH ... [X8],#2</code> 是「读两字节并步进」——典型 FNameEntry header 行为；</li>
+<li><code>TBNZ W23,#0</code> 测 bit0——经验上 UE4 的 <code>is_wide</code>；</li>
+<li><code>LSR X20, X23, #6</code> 左移 6 位提 len——也是 UE4 标准 header 编码。</li>
+</ol>
+<p>紧接着出现一段不寻常的算式：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">db4d4ac  MOV    W8, #0x1C72</span><br><span class="line">db4d4b0  MUL    W8, W20, W8</span><br><span class="line">db4d4b4  LSR    W8, W8, #0x10</span><br><span class="line">db4d4b8  ADD    W8, W8, W8,LSL#3</span><br><span class="line">db4d4bc  SUB    W8, W20, W8           ; case_id = len - (len/9)*9 = len % 9</span><br><span class="line">db4d4c0  AND    W9, W8, #0xFFFF</span><br><span class="line">db4d4c8  CMP    W9, #3</span><br><span class="line">db4d4cc  B.LE   ...                   ; 9 路 switch 派发</span><br></pre></td></tr></table></figure>
+
+<p><code>MOV #0x1C72 / MUL / LSR #16 / ADD,LSL#3 / SUB</code> 是经典 Hacker’s Delight 风格的无除法取模 9：<code>floor((1&lt;&lt;16)/9) = 7282 = 0x1C72</code>，<code>(x*0x1C72)&gt;&gt;16</code> 是 <code>x/9</code> 的近似商，再乘 9（用 <code>q + q*8</code>）减回去得余数。**只要看到 <code>0x1C72</code> 这个魔术常数，就能确认是 <code>% 9</code>**——这是后面一切的派发轴。</p>
+<p>后面的 <code>B.LE/B.NE/B.EQ</code> 形成一棵嵌套二叉派发树，9 个 case 散布在 <code>0xDB4D4EC..0xDB4DD48</code> 范围内。</p>
+<h3 id="3-2-用-IDA-MCP-把-9-个-case-抓全"><a href="#3-2-用-IDA-MCP-把-9-个-case-抓全" class="headerlink" title="3.2 用 IDA MCP 把 9 个 case 抓全"></a>3.2 用 IDA MCP 把 9 个 case 抓全</h3><p>最笨的办法是把 2.5KB 函数从头读到尾，逐个识别 case。但函数体里 case 之间夹了大量 NEON 循环、标量回退、跨块跳转，肉眼很容易跟丢。我选择<strong>用指令查询反向定位</strong>：</p>
+<p>每个 case 的”指纹”是一条 <code>AND W8, W8, #imm</code> 后面紧接 <code>DUP V0.16B, W8</code>——前者是 mask，后者把 key 字节广播成 16 字节给 NEON 用。先用 <code>insn_query</code> 列出函数内所有 <code>AND/EOR/MVN</code>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">mnem=AND, func=0xDB4D45C   →  32 条</span><br><span class="line">mnem=EOR, func=0xDB4D45C   →  24 条</span><br><span class="line">mnem=MVN, func=0xDB4D45C   →  21 条</span><br></pre></td></tr></table></figure>
+
+<p><code>AND</code> 32 条里大部分是循环对齐用的 <code>&amp; 0x3F0</code> &#x2F; <code>&amp; 0x3F8</code>，剔除后剩下 9 条不同立即数：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">db4d504  AND  W8, W8, #0x1F80     ← case 6</span><br><span class="line">db4d598  AND  W8, W8, #0x780      ← case 2</span><br><span class="line">db4d620  AND  W8, W8, #0x780      ← case 4</span><br><span class="line">db4d6a8  AND  W8, W8, #0x780      ← case 1</span><br><span class="line">db4d730  AND  W8, W8, #0x1F80     ← case 5</span><br><span class="line">db4d814  AND  W8, W8, #0x780      ← case 7</span><br><span class="line">db4d89c  AND  W8, W8, #0xFF80     ← case 3</span><br><span class="line">db4d924  AND  W8, W8, #0x780      ← case 8 (后来纠正)</span><br><span class="line">db4dd60  AND  W8, W8, #0x780      ← case 0</span><br></pre></td></tr></table></figure>
+
+<p>——清单一目了然。</p>
+<p>接着倒回去看每条 mask 上面 5–10 行，把”算 key 的子表达式”反推出来。比如 case 6 块 <code>0xDB4D4EC..0xDB4D504</code>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">db4d4ec  MOV    W8, #5</span><br><span class="line">db4d4f0  CMP    W20, #1</span><br><span class="line">db4d4f4  ORR    W8, W8, W20,LSL#2     ; W8 = 5 | (len&lt;&lt;2)</span><br><span class="line">db4d500  ADD    W8, W8, W20            ; W8 += len</span><br><span class="line">db4d504  AND    W8, W8, #0x1F80        ; key = ... &amp; 0x1F80</span><br><span class="line">db4d514  DUP    V0.16B, W8             ; broadcast 低 8 位</span><br><span class="line">db4d52c  EOR    V1.16B, V0.16B, V1.16B</span><br><span class="line">db4d530  MVN    V1.16B, V1.16B         ; out = ~(src ^ key)</span><br></pre></td></tr></table></figure>
+
+<p>→ <code>key = ((5 | (len&lt;&lt;2)) + len) &amp; 0x1F80</code>。</p>
+<p>9 个 case 同样套路抓一遍：</p>
+<table>
+<thead>
+<tr>
+<th>case (<code>len % 9</code>)</th>
+<th>块</th>
+<th>关键指令</th>
+<th>真实 key 表达式</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0</td>
+<td><code>0xDB4DD48</code></td>
+<td><code>EOR W8, W20, #0x40 ; ADD W8, W20 ; AND #0x780</code></td>
+<td><code>((len ^ 0x40) + len) &amp; 0x780</code></td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>0xDB4D690</code></td>
+<td><code>MOV W8,#0xDF ; EOR W8, W23,LSR#6 ; ADD W8, W20 ; AND #0x780</code></td>
+<td><code>(((header&gt;&gt;6) ^ 0xDF) + len) &amp; 0x780</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>0xDB4D580</code></td>
+<td><code>MOV W8,#0xCF ; ORR W8, W20, W8 ; ADD W8, W20 ; AND #0x780</code></td>
+<td><code>((len | 0xCF) + len) &amp; 0x780</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>0xDB4D888</code></td>
+<td><code>UBFX X8,X23,#6,#0x1A ; ADD W8,W8,W8,LSL#5 ; AND #0xFF80</code></td>
+<td><code>((header&gt;&gt;6) * 0x21) &amp; 0xFF80</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>0xDB4D60C</code></td>
+<td><code>UBFX X8,X23,#8,#0x18 ; ADD W8,W8,W23,LSR#6 ; AND #0x780</code></td>
+<td><code>((header&gt;&gt;8) + (header&gt;&gt;6)) &amp; 0x780</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>0xDB4D71C</code></td>
+<td><code>ADD W8,W20,W20,LSL#1 ; ADD W8,#5 ; AND #0x1F80</code></td>
+<td><code>(3*len + 5) &amp; 0x1F80</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>0xDB4D4EC</code></td>
+<td><code>MOV W8,#5 ; ORR W8,W8,W20,LSL#2 ; ADD W8,W20 ; AND #0x1F80</code></td>
+<td><code>((5 | (len&lt;&lt;2)) + len) &amp; 0x1F80</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>0xDB4D7FC</code></td>
+<td><code>LSR W8,W23,#0xA ; ORR #7 ; ADD W8,W23,LSR#6 ; AND #0x780</code></td>
+<td><code>(((header&gt;&gt;10) | 7) + (header&gt;&gt;6)) &amp; 0x780</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>0xDB4D910</code></td>
+<td><code>EOR W8,W20,#0xC ; ADD W8,W20 ; AND #0x780</code></td>
+<td><code>((len ^ 0x0C) + len) &amp; 0x780</code></td>
+</tr>
+</tbody></table>
+<p><strong>踩坑记录</strong>：第一次抓 case 0 和 case 8 我把它们标反了。<code>B.NE/B.EQ</code> 的真实跳向不能凭”块出现的物理顺序”猜，必须沿派发树走。<code>0xDB4DD48</code> 是从 <code>B.NE loc_DB4DD48</code>（<code>case_id != 4</code> 之后又 <code>!= 5/6/7</code>）落进来的——也就是 <code>case_id == 0</code>；<code>0xDB4D910</code> 才是 <code>case_id == 8</code> 的位置。后来从两个块各自的 <code>EOR W8, W20, #imm</code> 立即数（<code>#0x40</code> vs <code>#0xC</code>）反查表，对照标准 FName 实现里 case 0 通常用 <code>^ 0x40</code> 这种”魔术比特”，确认了顺序。</p>
+<h3 id="3-3-异或顺序：EON-vs-EOR-MVN"><a href="#3-3-异或顺序：EON-vs-EOR-MVN" class="headerlink" title="3.3 异或顺序：EON vs EOR + MVN"></a>3.3 异或顺序：<code>EON</code> vs <code>EOR + MVN</code></h3><p>NEON 路径都是这种二连：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">EOR  V1.16B, V0.16B, V1.16B    ; V1 = src ^ key</span><br><span class="line">MVN  V1.16B, V1.16B            ; V1 = ~V1</span><br></pre></td></tr></table></figure>
+
+<p>但<strong>短数据回退</strong>到标量循环时只有一条：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">EON  W11, W8, W11              ; W11 = W8 XOR (NOT W11) = ~(W8 ^ W11)</span><br></pre></td></tr></table></figure>
+
+<p><code>EON Wd, Wn, Wm</code> &#x3D; <code>Wn ^ (~Wm)</code> &#x3D; <code>~(Wn ^ Wm)</code>，所以两条路径<strong>数学等价</strong>。这一点必须验，否则 C++ PoC 用 <code>~(src ^ k)</code> 还是 <code>(src ^ k) ^ 0xFF</code> 还是 <code>~src ^ k</code> 都会写出不同形式，看起来正确实则会因为优先级和位宽问题翻车。</p>
+<h3 id="3-4-NEON-三档边界"><a href="#3-4-NEON-三档边界" class="headerlink" title="3.4 NEON 三档边界"></a>3.4 NEON 三档边界</h3><p>每个 case 末尾的边界判断是这样：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">CMP    W23, #0x200          ; header &lt; 0x200 (len ≤ 7)         → 标量 EON 逐字节</span><br><span class="line">B.CC   loc_xxx_scalar</span><br><span class="line">CMP    W23, #0x400          ; 0x200 ≤ header &lt; 0x400 (8≤len≤15) → 8B NEON</span><br><span class="line">B.CC   loc_xxx_8b</span><br><span class="line">                            ; header ≥ 0x400 (len ≥ 16)         → 16B NEON + 8B + 标量余数</span><br><span class="line">DUP    V0.16B, W8</span><br><span class="line">AND    X10, X9, #0x3F0      ; 16 字节对齐切片</span><br><span class="line">LDR    Q1, [X11]</span><br><span class="line">EOR    V1.16B, V0.16B, V1.16B</span><br><span class="line">MVN    V1.16B, V1.16B</span><br><span class="line">STR    Q1, [X11], #0x10</span><br></pre></td></tr></table></figure>
+
+<p>判别量是 <code>header</code> 本体（不是 <code>len</code>），但 <code>is_wide=0</code> 时 bit0 总是 0，bits 1..5 这版未用，所以低 6 位恒为 0，等价于按 <code>len</code> 切：</p>
+<table>
+<thead>
+<tr>
+<th>header 区间</th>
+<th>len 区间</th>
+<th>路径</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>&lt; 0x200</code></td>
+<td><code>≤ 7</code></td>
+<td>标量 <code>EON</code></td>
+</tr>
+<tr>
+<td><code>0x200..0x3FF</code></td>
+<td><code>8..15</code></td>
+<td>8B NEON</td>
+</tr>
+<tr>
+<td><code>≥ 0x400</code></td>
+<td><code>≥ 16</code></td>
+<td>16B NEON + 余数</td>
+</tr>
+</tbody></table>
+<p>边界值不影响解密结果，只影响性能。但一开始我误把”小数据走 NEON、大数据走标量”——正好反了——验证时要拿一个 <code>len &lt; 8</code> 的样本（比如 <code>&quot;None&quot;</code> 长度 4）才能跑到标量分支证伪。</p>
+<h3 id="3-5-is-wide-1-跳出局：宽路径是另一份算法"><a href="#3-5-is-wide-1-跳出局：宽路径是另一份算法" class="headerlink" title="3.5 is_wide=1 跳出局：宽路径是另一份算法"></a>3.5 <code>is_wide=1</code> 跳出局：宽路径是另一份算法</h3><p>走完 9 个 case 自以为搞定了，结果验 <code>len % 9 == 0</code> 且 <code>is_wide == 1</code> 的样本时（比如 <code>&quot;DefaultEngine&quot;</code> 那种本地化字符串），密文怎么解都是乱码。回头看入口：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">db4d490  TBNZ   W23, #0, loc_DB4DCC0   ; ★ is_wide=1 时直接跳走，不进 9-case</span><br></pre></td></tr></table></figure>
+
+<p>跳到 <code>0xDB4DCC0</code> 后：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">db4dcc0  LSR    X9,  X23, #5             ; len*2 (粗算)</span><br><span class="line">db4dcc4  ADD    X0,  SP, #var_808</span><br><span class="line">db4dcc8  MOV    X1,  X8</span><br><span class="line">db4dccc  MOV    W3,  #0x800              ; max_bytes</span><br><span class="line">db4dcd0  AND    X2,  X9, #0x7FE          ; bytes_to_copy = (header&gt;&gt;5) &amp; 0x7FE = len*2 (偶数)</span><br><span class="line">db4dcd4  BL     bounded_memcpy           ; 把密文搬到栈上</span><br><span class="line">db4dcd8  LSR    X20, X23, #6</span><br><span class="line">db4dcdc  ADD    X0,  SP, #var_808</span><br><span class="line">db4dce0  MOV    W1,  W20                 ; 第二个参数 = len（字符数）</span><br><span class="line">db4dce4  BL     sub_E292F10              ; ★ 完全独立的另一个解密函数</span><br></pre></td></tr></table></figure>
+
+<p><strong>整个 9-case 算法被绕过了</strong>。窄路径 PoC 套到宽字符上必然乱码。</p>
+<h3 id="3-6-宽路径-sub-E292F10-的-9-个-case"><a href="#3-6-宽路径-sub-E292F10-的-9-个-case" class="headerlink" title="3.6 宽路径 sub_E292F10 的 9 个 case"></a>3.6 宽路径 <code>sub_E292F10</code> 的 9 个 case</h3><p>进 <code>sub_E292F10</code> 看 prologue：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">e292f10  MOV    W8,  #0x38E38E39</span><br><span class="line">e292f18  UMULL  X8,  W1, W8</span><br><span class="line">e292f1c  LSR    X8,  X8, #0x21         ; q = (a2 * 0x38E38E39) &gt;&gt; 33</span><br><span class="line">e292f20  ADD    W8,  W8, W8,LSL#3       ; q*9</span><br><span class="line">e292f24  SUB    W9,  W1, W8             ; case_id = a2 % 9</span><br></pre></td></tr></table></figure>
+
+<p>——又是 <code>% 9</code> 派发，但常数变成了 <code>0x38E38E39</code>（更精确的 33-bit 倒数）；而且函数参数 <code>W1 = a2</code> 是 <code>len</code> 本身（不是 header），因为调用方在 <code>db4dce0</code> 已经预先 <code>LSR X23, #6</code> 把 len 单独传过来了。</p>
+<p>仍然用 <code>insn_query</code> 把 <code>AND/ORR/EOR/MOV</code> 全部抓下来。这次最大的发现：**只有 3 条 <code>AND</code>**（全是循环对齐），但有 <strong>13 条 <code>ORR W9, W9, #0x7F</code></strong> 和 **同样多的 <code>ADD W9, W9, #0x80</code><strong>——也就是说 9 个 case 的 key 收尾</strong>统一都是 <code>(... | 0x7F) + 0x80</code>**，没有窄路径的 <code>&amp; mask</code> 那一步。</p>
+<p>逐 case 抓完表达式：</p>
+<table>
+<thead>
+<tr>
+<th>case</th>
+<th>块</th>
+<th>关键序列</th>
+<th>key（无 mask 截断）</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0</td>
+<td><code>0xE292FD0</code></td>
+<td><code>AND W8,W1,#0x1F ; ADD W8,W8,W1 ; ORR #0x7F ; ADD #0x80</code></td>
+<td><code>((len &amp; 0x1F) + len | 0x7F) + 0x80</code></td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>0xE293188</code></td>
+<td><code>MOV W9,#0xDF ; EOR W9,W1,W9 ; ADD W9,W9,W1 ; ORR #0x7F ; ADD #0x80</code></td>
+<td><code>((len ^ 0xDF) + len | 0x7F) + 0x80</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>0xE293144</code></td>
+<td><code>MOV W9,#0xCF ; ORR W9,W1,W9 ; ADD W9,W9,W1 ; ORR #0x7F ; ADD #0x80</code></td>
+<td><code>((len | 0xCF) + len | 0x7F) + 0x80</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>0xE292F9C</code></td>
+<td><code>ADD W9,W1,W1,LSL#5</code> (len*0x21) <code>; ORR #0x7F ; ADD #0x80</code></td>
+<td><code>(len * 0x21 | 0x7F) + 0x80</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>0xE293090</code></td>
+<td><code>ADD W9,W1,W1,LSR#2 ; ORR #0x7F ; ADD #0x80</code></td>
+<td><code>((len + (len&gt;&gt;2)) | 0x7F) + 0x80</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>0xE293104</code></td>
+<td><code>ADD W9,W1,W1,LSL#1 ; ADD #5 ; ORR #0x7F ; ADD #0x80</code></td>
+<td><code>((3*len + 5) | 0x7F) + 0x80</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>0xE2931CC</code></td>
+<td><code>MOV W9,#5 ; ORR W9,W9,W1,LSL#2 ; ADD W9,W9,W1 ; ORR #0x7F ; ADD #0x80</code></td>
+<td><code>((5 | (len&lt;&lt;2)) + len | 0x7F) + 0x80</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>0xE292F50</code></td>
+<td><code>LSR W9,W1,#4 ; ORR #7 ; ADD W9,W9,W1 ; ORR #0x7F ; ADD #0x80</code></td>
+<td><code>(((len&gt;&gt;4) | 7) + len | 0x7F) + 0x80</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>0xE293210</code></td>
+<td><code>EOR W8,W1,#0x40 ; ADD W8,W8,W1 ; ORR #0x7F ; ADD #0x80</code></td>
+<td><code>((len ^ 0x40) + len | 0x7F) + 0x80</code></td>
+</tr>
+</tbody></table>
+<p><strong>和窄路径对照</strong>：case 1&#x2F;2&#x2F;3&#x2F;5&#x2F;6 的子表达式相同；<strong>case 0&#x2F;4&#x2F;7&#x2F;8 完全不同</strong>。所以工程实现必须分流，不能合并。</p>
+<p>异或方式：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">e293160  LDRH  W11, [X0,X8,LSL#1]      ; 加载 16-bit char</span><br><span class="line">e293164  EOR   W11, W11, W9            ; 16-bit XOR</span><br><span class="line">e293168  STRH  W11, [X0,X8,LSL#1]</span><br></pre></td></tr></table></figure>
+
+<p>注意 <strong>没有 MVN</strong>！只有 <code>EOR</code>。这跟窄路径的 <code>EOR + MVN</code> 完全不同。</p>
+<p>至于”既然窄路径有 MVN 宽路径没有，是不是不等价”——其实数学上<strong>对低 8 字节</strong>等价：<code>(value | 0x7F) + 0x80</code> 在低 8 位等于 <code>~value &amp; 0x80</code> 后再随进位翻转，再异或后再异或 <code>0xFF</code> &#x3D; MVN 效果一致。但宽路径用整 16 位 key 异或整 16 位 char，<strong>高 8 位的运算窄路径里根本没做</strong>（窄路径只有 8 位）。所以两条路径只对低字节等价、对高字节是两套完全不同的混淆。</p>
+<h3 id="3-7-用两个候选方案做交叉验证"><a href="#3-7-用两个候选方案做交叉验证" class="headerlink" title="3.7 用两个候选方案做交叉验证"></a>3.7 用两个候选方案做交叉验证</h3><p>抓完 9-case 表之后总担心是不是漏看了什么——比如说有没有可能整个 9-case 其实只是某个简化形式，真正的解密在另外一处。为了证明这一点，我自己先草拟了两个<strong>完全不同思路</strong>的候选实现，再用 IDA 反过来验证哪个跟 .so 的实际行为一致：</p>
+<p><strong>候选方案 A</strong>——「全局密钥 + NEON 广播」：</p>
+<blockquote>
+<p>假设有一个全局密钥变量（启动时通过别的算法算出来），把它的低 8 位读出来当 key，用 <code>vdupq_n_u8</code> 扩成 16 字节向量，然后对整段密文做 NEON 异或。这是另一些 UE4 项目（包括我之前看过的某 FPS 手游）常见的做法。</p>
+</blockquote>
+<p><strong>候选方案 B</strong>——「逐字节异或 + 哨兵早退」：</p>
+<blockquote>
+<p>假设没有 NEON 路径，就是个简单的标量循环：<code>for(i)&#123; if(buf[i]==0||buf[i]==key) break; out[i] = buf[i] ^ key; &#125;</code>。读到 0 或哨兵就提前结束。这种写法在做”FString 字面量解密”的项目里也常见。</p>
+</blockquote>
+<p>如果方案 A 是对的，应该能在 .so 里看到这两个特征：</p>
+<ol>
+<li>一处固定的全局地址被 <code>ADRP/ADRL</code> 取地址、<code>LDR W..., [..]</code> 读出 1 字节；</li>
+<li><strong><code>key_byte * 0x0101010101010101ULL</code></strong> 的 64 位扩展模式——要么以 <code>MOV W?, #0x01010101 ; MOVK W?, #0x0101, LSL#16</code> 的二条装载出现，要么这个 64 位常量落在 <code>.rodata</code>。</li>
+</ol>
+<p>用 IDA <code>find</code> 搜 immediate <code>16843009 (0x01010101)</code> 与 <code>72340172838076670 (0x0101010101010101)</code> ——<strong>两个都搜不到</strong>。再用 <code>insn_query</code> 全库拉所有 <code>DUP V?.16B, W?</code> 的指令，过滤掉 <code>fn: null</code>（数据被误反汇编的部分），剩下能确认在已识别函数内的，<strong>全部都在 <code>FName_CompareEntryChars</code> 与 <code>sub_E292F10</code> 这两个函数体内</strong>。</p>
+<p>换句话说，整个 .so 里没有”在某个固定全局地址读单字节 key、然后 NEON 广播”的代码模式。<strong>方案 A 不成立。</strong></p>
+<p>方案 B 的核心是「单字节 EOR 循环 + 一条 CMP early break」——也就是说应该有一个函数，结构是 <code>LDRB → CBZ/CMP → EOR → STRB → SUBS → B.NE</code>。我对潜在的字符串解密器（按 entry 字节读取的下游函数）做这个指纹的查询，没有匹配上。<strong>方案 B 也不成立。</strong></p>
+<p>由此反向佐证：<strong>这版样本的 FName 解密就是 9-case 现算 key + EON&#x2F;EOR</strong>，没有”全局密钥”，也没有”哨兵早退”。这两个候选方案在我熟悉的其它项目里都见过类似形态，但这一份样本就是不一样——<code>key</code> 完全由 <code>len/header</code> 现场派生，整个算法是「自包含」的，不依赖任何运行时全局状态。</p>
+<p>这一步看起来”啥也没找到”，但它的价值在于：<strong>排除了”我可能漏掉一个真正的解密器”这个怀疑</strong>。后面写工程代码时心里就踏实了——9-case 是唯一的解密路径。</p>
+<h3 id="3-8-小结：算法逆向的方法论"><a href="#3-8-小结：算法逆向的方法论" class="headerlink" title="3.8 小结：算法逆向的方法论"></a>3.8 小结：算法逆向的方法论</h3><p>整段算法逆向其实没什么”一击必中”的诀窍，只是分四步走：</p>
+<ol>
+<li><strong>找派发轴</strong>：见到 <code>0x1C72</code>&#x2F;<code>0x38E38E39</code>&#x2F;<code>0xAAAAAAAB</code> 这种魔术常数立即认出是无除法取模；</li>
+<li><strong>抓 mask 表</strong>：用 <code>insn_query</code> 列出所有 <code>AND Wd, Wd, #imm</code>，剔除循环对齐用的 <code>0x3F0</code>&#x2F;<code>0x3F8</code>，剩下的就是 case mask；</li>
+<li><strong>倒推子表达式</strong>：从每条 mask 往上读 5–10 行，注意区分 key 计算（<code>MOV/EOR/ORR/ADD</code>）和循环长度计算（带 <code>CSINC/CSEL</code>）；</li>
+<li><strong>验等价性</strong>：<code>EON</code> ≡ <code>EOR + MVN</code>，<code>(x | 0x7F) + 0x80</code> 在低位 ≡ <code>~x &amp; 0x80</code> 翻转，事先把这些代数恒等式在脑子里准备好，否则会在”明明都是异或为什么写出来不一样”上来回纠结。</li>
+</ol>
+<p>整个 0x3 节的工作产物：<strong>两份独立、可逐字节复现的 PoC</strong>（窄&#x2F;宽），mask 与表达式逐 case 对应到具体 IDA 地址，工程实现只要按 <code>header &amp; 1</code> 分流即可。完整代码见 0x6 节。</p>
+<h2 id="0x4-一个静态文件层面的小观察"><a href="#0x4-一个静态文件层面的小观察" class="headerlink" title="0x4 一个静态文件层面的小观察"></a>0x4 一个静态文件层面的小观察</h2><p>回到 .so 静态文件层面有一个有意思的事实：所有 UE4 反射元数据 token —— <code>&quot;ByteProperty&quot;</code>、<code>&quot;StaticClass&quot;</code>、<code>&quot;ObjectProperty&quot;</code>、<code>&quot;StructProperty&quot;</code>、<code>&quot;XGameViewportClient&quot;</code> 等等 —— 在 <code>.rodata</code> 里是<strong>明文</strong>，而且 ASCII 和 UTF-16 各存一份：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">0x1795219:  42 79 74 65 50 72 6F 70 65 72 74 79 00       &quot;ByteProperty\0&quot;</span><br><span class="line">0x2D7F7D8:  42 00 79 00 74 00 65 00 50 00 72 00 6F 00 70  &quot;B.y.t.e.P.r.o.p&quot;</span><br></pre></td></tr></table></figure>
+
+<p>加密只发生在<strong>运行时 FNamePool 内的 FNameEntry</strong> 字符体上——这些明文字面量在程序启动时被 <code>LookupOrAdd</code> 拿到，先用 9-case 算法生成密文，再写到 GMalloc 分配的 stringPool 里。所以静态 dump 这个 .so 不会看到密文版的 FName，只能在运行内存里抓到。</p>
+<p>这一条对做 SDK dumper 也有意义：如果你要的只是反射类型名，<strong>直接读 .rodata 就好</strong>，根本不需要解密。只有反查”FName.Index → 字符串”这条路才必须跑 9-case。</p>
+<h2 id="0x5-第四轮：FName-index-→-entry-地址"><a href="#0x5-第四轮：FName-index-→-entry-地址" class="headerlink" title="0x5 第四轮：FName index → entry 地址"></a>0x5 第四轮：FName index → entry 地址</h2><p>到这一步，要把所有东西串成”给我一个 NameId、还我一个明文字符串”的链路。</p>
+<h3 id="5-1-该样本的-NameId-是什么"><a href="#5-1-该样本的-NameId-是什么" class="headerlink" title="5.1 该样本的 NameId 是什么"></a>5.1 该样本的 NameId 是什么</h3><p>UE4 4.25 之前的经典 FName 实现里，<code>FName.ComparisonIndex</code> 是 32 位<strong>packed handle</strong>，编码方式从 <code>LookupOrAdd</code> 的写入路径反推：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">db49da4  ADD   X8, X22, X26, LSL#3       ; arena[chunkIdx]</span><br><span class="line">db49dac  LSL   W10, W26, #0x12           ; chunkIdx &lt;&lt; 18</span><br><span class="line">db49db4  AND   X9,  X25, #0xFFFFFFFE     ; cursor &amp; ~1</span><br><span class="line">db49db8  LDR   X8,  [X8, #0x38]          ; chunkPtr = arena[chunkIdx].slot+0x38</span><br><span class="line">db49dbc  ORR   W22, W10, W25,LSR#1       ; handle = (chunkIdx&lt;&lt;18) | (cursor&gt;&gt;1)</span><br><span class="line">db49dc0  ADD   X8,  X8, X9               ; entryAddr = chunkPtr + (cursor &amp; ~1)</span><br></pre></td></tr></table></figure>
+
+<p>读取路径互证：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">db49e3c  AND   X9, X8, #0x80000000        ; bit31 = case-sensitive 标志</span><br><span class="line">db49e48  LDR   X9, [X20, #0x48]           ; arena = bucket-&gt;entryArena</span><br><span class="line">db49e4c  UBFX  X10, X8, #0x12, #0xD       ; chunkIdx = (handle &gt;&gt; 18) &amp; 0x1FFF</span><br><span class="line">db49e50  ADD   X9, X9, X10, LSL#3         ; slotAddr = arena + chunkIdx*8</span><br><span class="line">db49e58  LDR   X8, [X9, #0x38]            ; chunkPtr = *(uintptr*)(slotAddr + 0x38)</span><br><span class="line">db49e5c  UBFIZ X9, X10, #1, #0x12         ; entryByteOff = (handle &amp; 0x3FFFF) &lt;&lt; 1</span><br><span class="line">db49e60  LDRH  W10, [X8, X9]              ; header = *(u16*)(chunkPtr + entryByteOff)</span><br></pre></td></tr></table></figure>
+
+<p><code>UBFIZ Xd, Xn, #1, #0x12</code> 是 ARM64 的 bitfield insert：取 W10 的低 18 位左移 1 位填进 X9。所以正确公式是：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">chunkIdx     = (handle &gt;&gt; 18) &amp; 0x1FFF              // 13 位</span><br><span class="line">entryByteOff = (handle &amp; 0x3FFFF) &lt;&lt; 1               // 18 位 &lt;&lt; 1</span><br><span class="line">slotAddr     =  arenaBase + chunkIdx * 8</span><br><span class="line">chunkPtr     = *(uintptr_t*)(slotAddr + 0x38)        // ★ +0x38 才是真 chunkPtr</span><br><span class="line">entryAddr    =  chunkPtr + entryByteOff</span><br><span class="line">bit31        =  case-sensitive 标志（仅查找用，不参与寻址）</span><br></pre></td></tr></table></figure>
+
+<p><code>+0x38</code> 这一条是该版 arena 的特殊布局——常规教科书是「指针数组 stride 8」，这里 stride 也是 8，但 8 字节槽里 <code>+0x38</code> 处才是真正的 chunkPtr。盲套通用公式会读到一个完全不可解的地址。</p>
+<h3 id="5-2-4-25-FNamePool-公式不能用"><a href="#5-2-4-25-FNamePool-公式不能用" class="headerlink" title="5.2 4.25+ FNamePool 公式不能用"></a>5.2 4.25+ FNamePool 公式不能用</h3><p>网上流传的 dumper 大多是这样：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">unsigned</span> <span class="type">int</span> Block  = NameId &gt;&gt; <span class="number">16</span>;</span><br><span class="line"><span class="type">unsigned</span> <span class="type">short</span> Off  = NameId &amp; <span class="number">0xFFFF</span>;</span><br><span class="line"><span class="keyword">auto</span> Chunk = <span class="built_in">Read</span>&lt;<span class="type">uintptr_t</span>&gt;(FNamePool + <span class="number">0x40</span> + Block * <span class="number">8</span>);</span><br><span class="line"><span class="type">uintptr_t</span> Entry = Chunk + Off * <span class="number">2</span>;</span><br></pre></td></tr></table></figure>
+
+<p>这是 UE4 4.25+ <code>FNamePool</code> 的布局，该样本<strong>不适用</strong>。因为：</p>
+<ul>
+<li>该样本是 16 个固定 hash 桶，不是按 block 索引的 chunk 数组；</li>
+<li><code>+0x40</code> 在该版本里不是 chunk 表起点，而是 bucket 内的 <code>hashTable</code> 指针;</li>
+<li>该样本的 NameId 是 packed handle，<code>&gt;&gt;16</code> 拿不到 block，<code>&amp;0xFFFF</code> 拿不到 offset；</li>
+<li>即使 entry 地址恰好对了，里面是密文，直接当 ASCII 读会乱码。</li>
+</ul>
+<p>要适配这版的话必须重写。</p>
+<h3 id="5-3-“从-NameId-现场反查”为什么不可行"><a href="#5-3-“从-NameId-现场反查”为什么不可行" class="headerlink" title="5.3 “从 NameId 现场反查”为什么不可行"></a>5.3 “从 NameId 现场反查”为什么不可行</h3><p>正常想法：拿 NameId → 算桶号 → 在 <code>hashTable[mask+1]</code> 里查 idx → 拿 handle → 解地址。</p>
+<p>问题是该样本选桶用的是 <code>hash64 &amp; 0xFFFFFFFF</code>（hash 的低 32 位），而 <code>NameId</code> 在这版 UE 里<strong>只承载 packed handle</strong>，不携带 hash 信息。也就是说，光给一个 NameId，<strong>没法知道它属于哪个桶</strong>。除非把所有 16 个桶的 hashTable 都过一遍才能匹配——现场反查每次都做一次 16 桶大扫，效率不可接受。</p>
+<h3 id="5-4-工程方案：启动时建一次缓存"><a href="#5-4-工程方案：启动时建一次缓存" class="headerlink" title="5.4 工程方案：启动时建一次缓存"></a>5.4 工程方案：启动时建一次缓存</h3><p>该样本的 <code>FNameEntry</code> 实体一旦插入，地址在生命周期内不变。所以一次扫遍 16 桶 × 整张 hashTable，把 <code>(handle → 解密后的明文)</code> 建成 <code>unordered_map</code>，之后查询 O(1)：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="type">size_t</span> b = <span class="number">0</span>; b &lt; <span class="number">16</span>; ++b) &#123;</span><br><span class="line">    bucket = pool + <span class="number">0x10080</span> + b * <span class="number">0x80</span>;</span><br><span class="line">    mask    = <span class="built_in">Read</span>&lt;<span class="type">uint32_t</span>&gt;(bucket + <span class="number">0x3C</span>);</span><br><span class="line">    hashTbl = <span class="built_in">Read</span>&lt;<span class="type">uintptr_t</span>&gt;(bucket + <span class="number">0x40</span>);</span><br><span class="line">    <span class="keyword">auto</span> tbl = <span class="built_in">ReadArray</span>&lt;<span class="type">uint32_t</span>&gt;(hashTbl, mask + <span class="number">1</span>);</span><br><span class="line">    <span class="keyword">for</span> (<span class="type">uint32_t</span> handle : tbl) &#123;</span><br><span class="line">        <span class="keyword">if</span> (!handle) <span class="keyword">continue</span>;</span><br><span class="line">        <span class="type">uintptr_t</span> entry = <span class="built_in">EntryAddrFromHandle</span>(bucket, handle);</span><br><span class="line">        cache[handle &amp; <span class="number">0x7FFFFFFF</span>] = <span class="built_in">ReadDecryptEntry</span>(entry);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>实测一份样本启动后 entry 数量在 80k–200k 之间，建表不到 1 秒。</p>
+<h2 id="0x6-完整最终代码"><a href="#0x6-完整最终代码" class="headerlink" title="0x6 完整最终代码"></a>0x6 完整最终代码</h2><p>下面这份是落在工程里可直接编译的（依赖工程的 <code>XY_TRead&lt;T&gt;</code> 与 <code>ReadAddr</code>）：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br><span class="line">111</span><br><span class="line">112</span><br><span class="line">113</span><br><span class="line">114</span><br><span class="line">115</span><br><span class="line">116</span><br><span class="line">117</span><br><span class="line">118</span><br><span class="line">119</span><br><span class="line">120</span><br><span class="line">121</span><br><span class="line">122</span><br><span class="line">123</span><br><span class="line">124</span><br><span class="line">125</span><br><span class="line">126</span><br><span class="line">127</span><br><span class="line">128</span><br><span class="line">129</span><br><span class="line">130</span><br><span class="line">131</span><br><span class="line">132</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">namespace</span> XGame &#123;</span><br><span class="line"></span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">uintptr_t</span> kFNamePoolModuleOffset = <span class="number">0x1BB53A80</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">uintptr_t</span> kPool_BucketsBase      = <span class="number">0x10080</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">size_t</span>    kBucketStride          = <span class="number">0x80</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">size_t</span>    kBucketCount           = <span class="number">16</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">size_t</span>    kBucket_HashMask       = <span class="number">0x3C</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">size_t</span>    kBucket_HashTablePtr   = <span class="number">0x40</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">size_t</span>    kBucket_EntryArenaPtr  = <span class="number">0x48</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">size_t</span>    kArenaSlotStride       = <span class="number">8</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">size_t</span>    kArenaSlotChunkPtr     = <span class="number">0x38</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">uint32_t</span> kHandleEntryMask  = <span class="number">0x3FFFFu</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">uint32_t</span> kHandleChunkShift = <span class="number">18</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">uint32_t</span> kHandleChunkMask  = <span class="number">0x1FFFu</span>;</span><br><span class="line"><span class="keyword">constexpr</span> <span class="type">uint32_t</span> kHandleIndexMask  = <span class="number">0x7FFFFFFFu</span>;</span><br><span class="line"></span><br><span class="line"><span class="type">uintptr_t</span> g_FNamePool = <span class="number">0</span>;</span><br><span class="line"><span class="function"><span class="keyword">inline</span> <span class="type">void</span> <span class="title">InitFNamePool</span><span class="params">(<span class="type">uintptr_t</span> libUE4Base)</span> </span>&#123;</span><br><span class="line">    g_FNamePool = libUE4Base + kFNamePoolModuleOffset;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">inline</span> <span class="type">void</span> <span class="title">DecryptNarrow</span><span class="params">(<span class="type">uint8_t</span>* buf, <span class="type">uint16_t</span> header)</span> </span>&#123;</span><br><span class="line">    <span class="type">const</span> <span class="type">uint32_t</span> len = (<span class="type">uint32_t</span>)(header &gt;&gt; <span class="number">6</span>);</span><br><span class="line">    <span class="keyword">if</span> (len == <span class="number">0</span> || buf[<span class="number">0</span>] == <span class="number">0</span>) <span class="keyword">return</span>;</span><br><span class="line">    <span class="type">uint32_t</span> key = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">switch</span> (len % <span class="number">9u</span>) &#123;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">0</span>: key = ((len ^ <span class="number">0x40u</span>)              + len)               &amp; <span class="number">0x0780u</span>; <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">1</span>: key = (((header &gt;&gt; <span class="number">6</span>) ^ <span class="number">0xDFu</span>)    + len)               &amp; <span class="number">0x0780u</span>; <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">2</span>: key = ((len | <span class="number">0xCFu</span>)              + len)               &amp; <span class="number">0x0780u</span>; <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">3</span>: key = ((header &gt;&gt; <span class="number">6</span>) * <span class="number">0x21u</span>)                          &amp; <span class="number">0xFF80u</span>; <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">4</span>: key = ((header &gt;&gt; <span class="number">8</span>)              + (header &gt;&gt; <span class="number">6</span>))     &amp; <span class="number">0x0780u</span>; <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">5</span>: key = (<span class="number">3u</span> * len + <span class="number">5u</span>)                                  &amp; <span class="number">0x1F80u</span>; <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">6</span>: key = ((<span class="number">5u</span> | (len &lt;&lt; <span class="number">2</span>))          + len)               &amp; <span class="number">0x1F80u</span>; <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">7</span>: key = (((header &gt;&gt; <span class="number">10</span>) | <span class="number">7u</span>)      + (header &gt;&gt; <span class="number">6</span>))     &amp; <span class="number">0x0780u</span>; <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">8</span>: key = ((len ^ <span class="number">0x0Cu</span>)              + len)               &amp; <span class="number">0x0780u</span>; <span class="keyword">break</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="type">const</span> <span class="type">uint8_t</span> k = (<span class="type">uint8_t</span>)key;</span><br><span class="line">    <span class="keyword">for</span> (<span class="type">uint32_t</span> i = <span class="number">0</span>; i &lt; len; ++i)</span><br><span class="line">        buf[i] = (<span class="type">uint8_t</span>)~(buf[i] ^ k);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">inline</span> <span class="type">void</span> <span class="title">DecryptWide</span><span class="params">(<span class="type">uint16_t</span>* buf, <span class="type">uint32_t</span> len)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">if</span> (len == <span class="number">0</span> || buf[<span class="number">0</span>] == <span class="number">0</span>) <span class="keyword">return</span>;</span><br><span class="line">    <span class="type">uint32_t</span> key = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">switch</span> (len % <span class="number">9u</span>) &#123;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">0</span>: key = ((len &amp; <span class="number">0x1Fu</span>)         + len);              <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">1</span>: key = ((len ^ <span class="number">0xDFu</span>)         + len);              <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">2</span>: key = ((len | <span class="number">0xCFu</span>)         + len);              <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">3</span>: key = (len + (len &lt;&lt; <span class="number">5</span>));                          <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">4</span>: key = (((len &gt;&gt; <span class="number">4</span>) | <span class="number">7u</span>)     + len);              <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">5</span>: key = (<span class="number">3u</span> * len + <span class="number">5u</span>);                             <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">6</span>: key = ((<span class="number">5u</span> | (len &lt;&lt; <span class="number">2</span>))     + len);              <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">7</span>: key = (len + (len &gt;&gt; <span class="number">2</span>));                          <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> <span class="number">8</span>: key = ((len ^ <span class="number">0x40u</span>)         + len);              <span class="keyword">break</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    key = (key | <span class="number">0x7Fu</span>) + <span class="number">0x80u</span>;</span><br><span class="line">    <span class="type">const</span> <span class="type">uint16_t</span> k = (<span class="type">uint16_t</span>)key;</span><br><span class="line">    <span class="keyword">for</span> (<span class="type">uint32_t</span> i = <span class="number">0</span>; i &lt; len; ++i) buf[i] ^= k;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">uintptr_t</span> <span class="title">EntryAddrFromHandle</span><span class="params">(<span class="type">uintptr_t</span> bucketBase, <span class="type">uint32_t</span> handle)</span> </span>&#123;</span><br><span class="line">    handle &amp;= kHandleIndexMask;</span><br><span class="line">    <span class="keyword">if</span> (!handle) <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    <span class="type">const</span> <span class="type">uint32_t</span>  chunkIdx     = (handle &gt;&gt; kHandleChunkShift) &amp; kHandleChunkMask;</span><br><span class="line">    <span class="type">const</span> <span class="type">uint32_t</span>  entryByteOff = (handle &amp; kHandleEntryMask) &lt;&lt; <span class="number">1</span>;</span><br><span class="line">    <span class="type">const</span> <span class="type">uintptr_t</span> arenaBase = <span class="built_in">XY_TRead</span>&lt;<span class="type">uintptr_t</span>&gt;(bucketBase + kBucket_EntryArenaPtr);</span><br><span class="line">    <span class="keyword">if</span> (!arenaBase) <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    <span class="type">const</span> <span class="type">uintptr_t</span> slotAddr = arenaBase + (<span class="type">uintptr_t</span>)chunkIdx * kArenaSlotStride;</span><br><span class="line">    <span class="type">const</span> <span class="type">uintptr_t</span> chunkPtr = <span class="built_in">XY_TRead</span>&lt;<span class="type">uintptr_t</span>&gt;(slotAddr + kArenaSlotChunkPtr);</span><br><span class="line">    <span class="keyword">if</span> (!chunkPtr) <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">return</span> chunkPtr + entryByteOff;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">std::string <span class="title">ReadDecryptEntry</span><span class="params">(<span class="type">uintptr_t</span> entry)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">if</span> (!entry) <span class="keyword">return</span> <span class="string">&quot;None&quot;</span>;</span><br><span class="line">    <span class="type">uint16_t</span> header  = <span class="built_in">XY_TRead</span>&lt;<span class="type">uint16_t</span>&gt;(entry);</span><br><span class="line">    <span class="type">bool</span>     is_wide = (header &amp; <span class="number">1u</span>) != <span class="number">0</span>;</span><br><span class="line">    <span class="type">uint32_t</span> len     = (header &gt;&gt; <span class="number">6</span>) &amp; <span class="number">0x3FFu</span>;</span><br><span class="line">    <span class="keyword">if</span> (len == <span class="number">0</span> || len &gt;= <span class="number">250</span>) <span class="keyword">return</span> <span class="string">&quot;None&quot;</span>;</span><br><span class="line">    <span class="keyword">if</span> (!is_wide) &#123;</span><br><span class="line">        <span class="function">std::vector&lt;<span class="type">uint8_t</span>&gt; <span class="title">raw</span><span class="params">(len)</span></span>;</span><br><span class="line">        <span class="keyword">if</span> (!<span class="built_in">ReadAddr</span>(entry + <span class="number">2</span>, raw.<span class="built_in">data</span>(), len)) <span class="keyword">return</span> <span class="string">&quot;None&quot;</span>;</span><br><span class="line">        <span class="built_in">DecryptNarrow</span>(raw.<span class="built_in">data</span>(), header);</span><br><span class="line">        <span class="keyword">return</span> std::<span class="built_in">string</span>((<span class="type">char</span>*)raw.<span class="built_in">data</span>(), len);</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        std::vector&lt;<span class="type">uint16_t</span>&gt; <span class="built_in">raw</span>(len);</span><br><span class="line">        <span class="keyword">if</span> (!<span class="built_in">ReadAddr</span>(entry + <span class="number">2</span>, raw.<span class="built_in">data</span>(), len * <span class="number">2</span>)) <span class="keyword">return</span> <span class="string">&quot;None&quot;</span>;</span><br><span class="line">        <span class="built_in">DecryptWide</span>(raw.<span class="built_in">data</span>(), len);</span><br><span class="line">        <span class="comment">// Utf16ToUtf8 略，BMP 区段三段式</span></span><br><span class="line">        std::string s; s.<span class="built_in">reserve</span>(len);</span><br><span class="line">        <span class="keyword">for</span> (<span class="type">uint32_t</span> i = <span class="number">0</span>; i &lt; len; ++i) &#123;</span><br><span class="line">            <span class="type">uint16_t</span> c = raw[i];</span><br><span class="line">            <span class="keyword">if</span> (c &lt; <span class="number">0x80</span>)        s.<span class="built_in">push_back</span>((<span class="type">char</span>)c);</span><br><span class="line">            <span class="keyword">else</span> <span class="keyword">if</span> (c &lt; <span class="number">0x800</span>)  &#123; s.<span class="built_in">push_back</span>((<span class="type">char</span>)(<span class="number">0xC0</span>|(c&gt;&gt;<span class="number">6</span>))); s.<span class="built_in">push_back</span>((<span class="type">char</span>)(<span class="number">0x80</span>|(c&amp;<span class="number">0x3F</span>))); &#125;</span><br><span class="line">            <span class="keyword">else</span>                 &#123; s.<span class="built_in">push_back</span>((<span class="type">char</span>)(<span class="number">0xE0</span>|(c&gt;&gt;<span class="number">12</span>))); s.<span class="built_in">push_back</span>((<span class="type">char</span>)(<span class="number">0x80</span>|((c&gt;&gt;<span class="number">6</span>)&amp;<span class="number">0x3F</span>))); s.<span class="built_in">push_back</span>((<span class="type">char</span>)(<span class="number">0x80</span>|(c&amp;<span class="number">0x3F</span>))); &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">return</span> s;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="type">static</span> std::unordered_map&lt;<span class="type">uint32_t</span>, std::string&gt; g_FNameCache;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">BuildFNameCache</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    g_FNameCache.<span class="built_in">clear</span>();</span><br><span class="line">    g_FNameCache.<span class="built_in">reserve</span>(<span class="number">0x100000</span>);</span><br><span class="line">    <span class="keyword">for</span> (<span class="type">size_t</span> b = <span class="number">0</span>; b &lt; kBucketCount; ++b) &#123;</span><br><span class="line">        <span class="type">const</span> <span class="type">uintptr_t</span> bucket = g_FNamePool + kPool_BucketsBase + b * kBucketStride;</span><br><span class="line">        <span class="type">const</span> <span class="type">uint32_t</span>  mask    = <span class="built_in">XY_TRead</span>&lt;<span class="type">uint32_t</span>&gt;(bucket + kBucket_HashMask);</span><br><span class="line">        <span class="type">const</span> <span class="type">uintptr_t</span> hashTbl = <span class="built_in">XY_TRead</span>&lt;<span class="type">uintptr_t</span>&gt;(bucket + kBucket_HashTablePtr);</span><br><span class="line">        <span class="keyword">if</span> (!hashTbl || !mask) <span class="keyword">continue</span>;</span><br><span class="line">        <span class="function">std::vector&lt;<span class="type">uint32_t</span>&gt; <span class="title">tbl</span><span class="params">(mask + <span class="number">1</span>)</span></span>;</span><br><span class="line">        <span class="keyword">if</span> (!<span class="built_in">ReadAddr</span>(hashTbl, tbl.<span class="built_in">data</span>(), (mask + <span class="number">1</span>) * <span class="number">4</span>)) <span class="keyword">continue</span>;</span><br><span class="line">        <span class="keyword">for</span> (<span class="type">uint32_t</span> handle : tbl) &#123;</span><br><span class="line">            <span class="keyword">if</span> (!handle) <span class="keyword">continue</span>;</span><br><span class="line">            <span class="type">uint32_t</span> key = handle &amp; kHandleIndexMask;</span><br><span class="line">            <span class="keyword">if</span> (g_FNameCache.<span class="built_in">count</span>(key)) <span class="keyword">continue</span>;</span><br><span class="line">            <span class="type">uintptr_t</span> entry = <span class="built_in">EntryAddrFromHandle</span>(bucket, handle);</span><br><span class="line">            <span class="keyword">if</span> (!entry) <span class="keyword">continue</span>;</span><br><span class="line">            std::string name = <span class="built_in">ReadDecryptEntry</span>(entry);</span><br><span class="line">            <span class="keyword">if</span> (!name.<span class="built_in">empty</span>() &amp;&amp; name != <span class="string">&quot;None&quot;</span>)</span><br><span class="line">                g_FNameCache.<span class="built_in">emplace</span>(key, std::<span class="built_in">move</span>(name));</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">std::string <span class="title">GetName</span><span class="params">(<span class="type">uint32_t</span> NameId)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">auto</span> it = g_FNameCache.<span class="built_in">find</span>(NameId &amp; kHandleIndexMask);</span><br><span class="line">    <span class="keyword">return</span> it != g_FNameCache.<span class="built_in">end</span>() ? it-&gt;second : <span class="string">&quot;None&quot;</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">&#125; <span class="comment">// namespace XGame</span></span><br></pre></td></tr></table></figure>
+
+<h2 id="0x7-难点回顾"><a href="#0x7-难点回顾" class="headerlink" title="0x7 难点回顾"></a>0x7 难点回顾</h2><p>把整个过程的”卡点”列出来，留给后人翻类似样本时少走弯路：</p>
+<ol>
+<li><strong>先入为主把 LTO 当混淆</strong>。任何 90KB 以上的单函数都让人想到 OLLVM。但 ARM64 + Clang LTO + 全 unroll 完全能产生这种体积。判别套路：所有”opaque predicate”先看 bss 字节是不是 <code>__cxa_guard</code>，所有”绕路块”先看 BL 跟到的地方是不是异常重入 trampoline，所有”dispatcher”先看是不是 stack canary check + RET。</li>
+<li><strong><code>g_FNamePool</code> 的指针 vs 实体</strong>。代码里用 <code>ADRL</code> 直接拿地址、不解引用，意味着这是结构体本体；如果是指针变量会先 <code>LDR Xn, [Xn]</code>。这一条搞错的话，拿到的”chunk 指针”会指向 stringPool 的那个 GMalloc 块里去，立刻乱。</li>
+<li><strong>9-case mask 不能省</strong>。流传的 PoC 把 <code>&amp; 0x780/0x1F80/0xFF80</code> 写成 <code>&amp; 0x000</code>，看起来好像异或不掉就是这个原因。每个 case 的 mask 必须从对应分支里的 <code>AND W8, W8, #imm</code> 抓——case 用 <code>B.LE/B.NE/B.EQ</code> 不严格按 0..8 顺序排列，需要按特征指令对位。</li>
+<li><strong>窄&#x2F;宽路径不能合并</strong>。is_wide&#x3D;1 时 <code>FName_CompareEntryChars</code> 把控制流交给 <code>sub_E292F10</code>，那是另一份 9-case 算法，常量、收尾、是否取反都不同。把窄路径硬套到 16-bit 字符上会出乱码。</li>
+<li><strong>该样本的 NameId 不能现场反查地址</strong>。它是 packed handle，不携带 hash。要么扫 16 桶建缓存（推荐），要么放弃靠 NameId 现场解决。</li>
+<li>**arena chunk 表的 <code>+0x38</code>**。这不是 UE 标准布局，是该版本的特殊布局——chunkPtr 不是直接放在 arena 槽起点，而是槽内 +0x38 处。盲套通用公式会读出非堆地址。</li>
+</ol>
+<h2 id="0x8-总结"><a href="#0x8-总结" class="headerlink" title="0x8 总结"></a>0x8 总结</h2><p>整个 PoC 跑下来是这样的链路：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">模块基址 + 0x1BB53A80 = g_FNamePool</span><br><span class="line">                     │</span><br><span class="line">                     ├── +0x10080 + i*0x80 = bucket[i]   (i ∈ [0,16))</span><br><span class="line">                     │                  │</span><br><span class="line">                     │                  ├── +0x3C  hashMask</span><br><span class="line">                     │                  ├── +0x40  hashTable[mask+1]  (uint32 handles)</span><br><span class="line">                     │                  └── +0x48  arena</span><br><span class="line">                     │                              │</span><br><span class="line">                     │                              └── +chunkIdx*8 + 0x38 = chunkPtr</span><br><span class="line">                     │                                                │</span><br><span class="line">                     │                                                └── +entryByteOff = entry</span><br><span class="line">                     │                                                                  │</span><br><span class="line">                     │                                                                  ├── header (u16, bit0=is_wide, bits6..15=len)</span><br><span class="line">                     │                                                                  └── 密文字节</span><br><span class="line">                     │</span><br><span class="line">                     └── 解密 = 9-case 异或 + (窄路径 ~ / 宽路径 (|0x7F)+0x80)</span><br></pre></td></tr></table></figure>
+
+<p>最后给当时被打脸的自己几条建议：</p>
+<ul>
+<li>先看 helper 函数身份再下混淆判断；</li>
+<li>ARM64 上 16&#x2F;8 字节 NEON + 标量回退的三档路径几乎都是性能优化，不是混淆；</li>
+<li>如果 <code>LDR Xn, [bss_addr_aligned_8]</code> + <code>BL</code> 很短，去看那条 BL 是不是 PLT 跳板、目标是不是 libc++ 的 <code>__cxa_guard_*</code>；</li>
+<li>任何”看起来像 dispatcher 的块”都先 <code>MRS X?, TPIDR_EL0; LDR X?,[X?,#0x28]</code> 找 stack canary，找到了基本就是 epilogue。</li>
+</ul>
+<p>整个分析过程使用 IDA Pro + IDA MCP 完成，全程不依赖反编译伪码——汇编 + helper 身份匹配足以走完。这份样本最终落到内存 dumper 里，能稳定从 <code>FName.ComparisonIndex</code> 反查到 <code>&quot;ByteProperty&quot;</code> <code>&quot;XGCharacterMovementComponent&quot;</code> 等等所有反射元数据 token 的明文。</p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/">https://brszzz.github.io/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/%E6%B8%B8%E6%88%8F%E5%AE%89%E5%85%A8/">游戏安全</a><a class="post-meta__tags" href="/tags/ARM64/">ARM64</a><a class="post-meta__tags" href="/tags/IDA-Pro/">IDA Pro</a><a class="post-meta__tags" href="/tags/Unreal-Engine-4/">Unreal Engine 4</a><a class="post-meta__tags" href="/tags/FName/">FName</a><a class="post-meta__tags" href="/tags/%E9%80%86%E5%90%91%E5%88%86%E6%9E%90/">逆向分析</a><a class="post-meta__tags" href="/tags/LTO/">LTO</a><a class="post-meta__tags" href="/tags/NEON/">NEON</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="领域特定虚拟机DSVM指令完整还原"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">领域特定虚拟机DSVM指令完整还原</div></div><div class="info-2"><div class="info-item-1">本文记录了对一款伪装为 shell 脚本的 ARM64 ELF 外挂文件进行深度逆向分析的完整过程。从初始 OLLVM 控制流平坦化误判出发，通过 PAC 序言检测、字节码协议发现和 12 调度器架构分析，最终揭示其真实面目为一个针对 UE4 移动游戏对象遍历的领域特定虚拟机（DSVM）。文章详述了 Capstone + Unicorn 工具链的工程实践、790 个操作码的语义提取，以及恶意代码检测的全流程。</div></div></div></a><a class="pagination-related" href="/2026/06/10/SELinux%E6%A3%80%E6%B5%8B%E5%AF%B9%E6%8A%97-KPM%E5%BC%80%E5%8F%91%E5%AE%9E%E6%88%98/" title="APatch KPM 开发实战——绕过 DirtySepolicy / Duck Detector 的 SELinux Root 检测"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">APatch KPM 开发实战——绕过 DirtySepolicy / Duck Detector 的 SELinux Root 检测</div></div><div class="info-2"><div class="info-item-1">基于 KernelPatch/APatch 框架开发 KPM 内核模块绕过 SELinux Root 检测的完整实战记录。从 inline hook 方案出发，经历 30 余次迭代、内核崩溃诊断，最终采用 syscall 层 fp_hook_syscalln 拦截 write() 实现 5184 字节轻量模块，完全绕过 DirtySepolicy 与 Duck Detector 的全部检测项。</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</div></div><div class="info-2"><div class="info-item-1">记录一次完整的 Android 游戏外挂逆向分析过程，从被误判的"加密"疑点出发，通过 OLLVM 去混淆、TBZ 寄存器分析和 maps 对比，还原基于 shadowhook 框架的注入架构</div></div></div></a><a class="pagination-related" href="/2026/06/04/honey-page-five-generations/" title="内存访问蜜罐页的五次进化——从静态陷阱到多维度 PMU 统计检测"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">内存访问蜜罐页的五次进化——从静态陷阱到多维度 PMU 统计检测</div></div><div class="info-2"><div class="info-item-1">设计并验证五代蜜罐页检测方案，从 MADV_DONTNEED 轮换 + mincore 自检到融合 ARMv8 PMU 的六维度统计检测，探索跨进程内存读取检测的完整进化路径与硬件级残留信号。</div></div></div></a><a class="pagination-related" href="/2026/06/23/%E4%B8%80%E5%8F%AAARM64%E5%A3%B3%E7%9A%84%E4%B8%A4%E6%AC%A1Unicorn%E6%95%91%E5%9C%BA%E2%80%94%E2%80%94%E4%BB%8E%E5%8E%8B%E7%BC%A9%E5%A4%96%E5%A3%B3%E5%88%B0NEON-XOR%E5%AD%97%E7%AC%A6%E4%B8%B2/" title="一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-23</div><div class="info-item-2">一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串</div></div><div class="info-2"><div class="info-item-1">同一把刀削两层皮。Phase 1 用 Unicorn 模拟脱掉自解压外壳拿到原 ELF，Phase 2 再用 Unicorn 把里面 800+ 处 NEON XOR 字符串混淆全捞出来。两阶段共 450 行 Python，75 秒完成。</div></div></div></a><a class="pagination-related" href="/2026/06/04/vm_rw_detect_analysis/" title="ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗</div></div><div class="info-2"><div class="info-item-1">系统研究 Android ARM64 平台上跨进程内存读写的可检测性，覆盖 mincore 自检、PerfEvent 跨通道测序、PMU 硬件计数器、kprobes 内核挂钩等十余种检测方法，分析各方案的优缺点与对抗手段。</div></div></div></a><a class="pagination-related" href="/2026/06/06/MMU%E6%96%AD%E7%82%B9%E7%B3%BB%E7%BB%9F%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3/" title="ARM64 页表断点——基于 PTE 缺页异常的透明拦截、上下文捕获与寄存器实时修改"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-06</div><div class="info-item-2">ARM64 页表断点——基于 PTE 缺页异常的透明拦截、上下文捕获与寄存器实时修改</div></div><div class="info-2"><div class="info-item-1">基于 ARM64 PTE 权限位操控与 do_page_fault 缺页拦截的透明断点系统，支持执行/读/写三种断点类型、32 个全局槽位、GPR+SIMD 完整上下文捕获与寄存器实时修改，One-Shot 非阻塞模式对目标进程完全不可感知，面向 Android 游戏逆向工程场景。</div></div></div></a><a class="pagination-related" href="/2026/06/04/cross-process-memory-detection/" title="跨进程内存读写的攻防博弈——从内核缺页陷阱到应用层数据溯源"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">跨进程内存读写的攻防博弈——从内核缺页陷阱到应用层数据溯源</div></div><div class="info-2"><div class="info-item-1">ARM64 Android 平台 process_vm_readv/writev 检测方法的完整探索，实测 mincore 自检、PerfEvent 跨通道测序、PMU 硬件计数器等十余种方案，分析 root 权限攻击者的规避手段与残留检测信号。</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">35</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">132</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#0x0-%E8%B5%B7%E5%9B%A0"><span class="toc-text">0x0 起因</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#0x1-%E7%AC%AC%E4%B8%80%E8%BD%AE%E8%AF%AF%E5%88%A4%EF%BC%9AOLLVM%EF%BC%9F"><span class="toc-text">0x1 第一轮误判：OLLVM？</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-1-0xDB36688-%E4%B8%8D%E6%98%AF-dispatcher%EF%BC%8C%E6%98%AF%E5%87%BD%E6%95%B0-epilogue"><span class="toc-text">1.1 0xDB36688 不是 dispatcher，是函数 epilogue</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-%E9%82%A3%E4%BA%9B-bss-%E5%AD%97%E8%8A%82%E6%98%AF-cxa-guard"><span class="toc-text">1.2 那些 bss 字节是 __cxa_guard</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-3-%E3%80%8C%E6%88%90%E5%AF%B9%E7%9F%AD%E5%9D%97%E3%80%8D%E6%98%AF-LTO-%E7%9A%84%E5%B1%95%E5%BC%80-%E5%BC%82%E5%B8%B8%E9%87%8D%E5%85%A5-trampoline"><span class="toc-text">1.3 「成对短块」是 LTO 的展开 + 异常重入 trampoline</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-4-N0ne-Nome-%E6%98%AF-NAME-None-%E5%93%A8%E5%85%B5"><span class="toc-text">1.4 &quot;N0ne&quot; &#x2F; &quot;Nome&quot; 是 NAME_None 哨兵</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-5-%E7%9C%9F%E6%AD%A3%E7%9A%84%E6%9C%AC%E8%B4%A8%EF%BC%9ALTO-%E5%85%A8-unroll"><span class="toc-text">1.5 真正的本质：LTO + 全 unroll</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#0x2-%E7%AC%AC%E4%BA%8C%E8%BD%AE%EF%BC%9A%E6%8A%8A-FNamePool-%E5%B8%83%E5%B1%80%E6%8A%A0%E5%87%BA%E6%9D%A5"><span class="toc-text">0x2 第二轮：把 FNamePool 布局抠出来</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#0x3-%E7%AC%AC%E4%B8%89%E8%BD%AE%EF%BC%9AFName-%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84-9-%E8%B7%AF-case-%E7%AE%97%E6%B3%95%E9%80%86%E5%90%91"><span class="toc-text">0x3 第三轮：FName 字符串加密的 9 路 case 算法逆向</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#3-1-%E5%85%A5%E5%8F%A3%E5%88%A4%E5%88%AB%EF%BC%9A%E6%80%8E%E4%B9%88%E5%8F%91%E7%8E%B0%E8%BF%99%E6%98%AF%E2%80%9D9-case-%E6%B4%BE%E5%8F%91%E2%80%9D"><span class="toc-text">3.1 入口判别：怎么发现这是”9-case 派发”</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-2-%E7%94%A8-IDA-MCP-%E6%8A%8A-9-%E4%B8%AA-case-%E6%8A%93%E5%85%A8"><span class="toc-text">3.2 用 IDA MCP 把 9 个 case 抓全</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-3-%E5%BC%82%E6%88%96%E9%A1%BA%E5%BA%8F%EF%BC%9AEON-vs-EOR-MVN"><span class="toc-text">3.3 异或顺序：EON vs EOR + MVN</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-4-NEON-%E4%B8%89%E6%A1%A3%E8%BE%B9%E7%95%8C"><span class="toc-text">3.4 NEON 三档边界</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-5-is-wide-1-%E8%B7%B3%E5%87%BA%E5%B1%80%EF%BC%9A%E5%AE%BD%E8%B7%AF%E5%BE%84%E6%98%AF%E5%8F%A6%E4%B8%80%E4%BB%BD%E7%AE%97%E6%B3%95"><span class="toc-text">3.5 is_wide&#x3D;1 跳出局：宽路径是另一份算法</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-6-%E5%AE%BD%E8%B7%AF%E5%BE%84-sub-E292F10-%E7%9A%84-9-%E4%B8%AA-case"><span class="toc-text">3.6 宽路径 sub_E292F10 的 9 个 case</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-7-%E7%94%A8%E4%B8%A4%E4%B8%AA%E5%80%99%E9%80%89%E6%96%B9%E6%A1%88%E5%81%9A%E4%BA%A4%E5%8F%89%E9%AA%8C%E8%AF%81"><span class="toc-text">3.7 用两个候选方案做交叉验证</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-8-%E5%B0%8F%E7%BB%93%EF%BC%9A%E7%AE%97%E6%B3%95%E9%80%86%E5%90%91%E7%9A%84%E6%96%B9%E6%B3%95%E8%AE%BA"><span class="toc-text">3.8 小结：算法逆向的方法论</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#0x4-%E4%B8%80%E4%B8%AA%E9%9D%99%E6%80%81%E6%96%87%E4%BB%B6%E5%B1%82%E9%9D%A2%E7%9A%84%E5%B0%8F%E8%A7%82%E5%AF%9F"><span class="toc-text">0x4 一个静态文件层面的小观察</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#0x5-%E7%AC%AC%E5%9B%9B%E8%BD%AE%EF%BC%9AFName-index-%E2%86%92-entry-%E5%9C%B0%E5%9D%80"><span class="toc-text">0x5 第四轮：FName index → entry 地址</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#5-1-%E8%AF%A5%E6%A0%B7%E6%9C%AC%E7%9A%84-NameId-%E6%98%AF%E4%BB%80%E4%B9%88"><span class="toc-text">5.1 该样本的 NameId 是什么</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-2-4-25-FNamePool-%E5%85%AC%E5%BC%8F%E4%B8%8D%E8%83%BD%E7%94%A8"><span class="toc-text">5.2 4.25+ FNamePool 公式不能用</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-3-%E2%80%9C%E4%BB%8E-NameId-%E7%8E%B0%E5%9C%BA%E5%8F%8D%E6%9F%A5%E2%80%9D%E4%B8%BA%E4%BB%80%E4%B9%88%E4%B8%8D%E5%8F%AF%E8%A1%8C"><span class="toc-text">5.3 “从 NameId 现场反查”为什么不可行</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-4-%E5%B7%A5%E7%A8%8B%E6%96%B9%E6%A1%88%EF%BC%9A%E5%90%AF%E5%8A%A8%E6%97%B6%E5%BB%BA%E4%B8%80%E6%AC%A1%E7%BC%93%E5%AD%98"><span class="toc-text">5.4 工程方案：启动时建一次缓存</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#0x6-%E5%AE%8C%E6%95%B4%E6%9C%80%E7%BB%88%E4%BB%A3%E7%A0%81"><span class="toc-text">0x6 完整最终代码</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#0x7-%E9%9A%BE%E7%82%B9%E5%9B%9E%E9%A1%BE"><span class="toc-text">0x7 难点回顾</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#0x8-%E6%80%BB%E7%BB%93"><span class="toc-text">0x8 总结</span></a></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/%E4%B8%80%E5%8F%AAARM64%E5%A3%B3%E7%9A%84%E4%B8%A4%E6%AC%A1Unicorn%E6%95%91%E5%9C%BA%E2%80%94%E2%80%94%E4%BB%8E%E5%8E%8B%E7%BC%A9%E5%A4%96%E5%A3%B3%E5%88%B0NEON-XOR%E5%AD%97%E7%AC%A6%E4%B8%B2/" title="一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串">一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串</a><time datetime="2026-06-23T12:16:00.000Z" title="发表于 2026-06-23 20:16:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/" title="记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</a><time datetime="2026-06-23T12:04:00.000Z" title="发表于 2026-06-23 20:04:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/" title="ELF 二进制字符串加密的逆向">ELF 二进制字符串加密的逆向</a><time datetime="2026-06-23T11:59:00.000Z" title="发表于 2026-06-23 19:59:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="领域特定虚拟机DSVM指令完整还原">领域特定虚拟机DSVM指令完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/" title="某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程">某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程</a><time datetime="2026-06-17T16:00:00.000Z" title="发表于 2026-06-18 00:00:00">2026-06-18</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('a.site-page[href="/video-player/"]').forEach(function(a){a.setAttribute('target','_blank');a.setAttribute('rel','noopener')})})</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

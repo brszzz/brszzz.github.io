@@ -1,0 +1,1310 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>跨进程内存读写的攻防博弈——从内核缺页陷阱到应用层数据溯源 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="ARM64 Android 平台 process_vm_readv&#x2F;writev 检测方法的完整探索，实测 mincore 自检、PerfEvent 跨通道测序、PMU 硬件计数器等十余种方案，分析 root 权限攻击者的规避手段与残留检测信号。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="跨进程内存读写的攻防博弈——从内核缺页陷阱到应用层数据溯源">
+<meta property="og:url" content="https://brszzz.github.io/2026/06/04/cross-process-memory-detection/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="ARM64 Android 平台 process_vm_readv&#x2F;writev 检测方法的完整探索，实测 mincore 自检、PerfEvent 跨通道测序、PMU 硬件计数器等十余种方案，分析 root 权限攻击者的规避手段与残留检测信号。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2026-06-04T09:01:00.000Z">
+<meta property="article:modified_time" content="2026-06-23T11:49:48.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="Linux内核">
+<meta property="article:tag" content="游戏安全">
+<meta property="article:tag" content="ARM64">
+<meta property="article:tag" content="Android">
+<meta property="article:tag" content="跨进程">
+<meta property="article:tag" content="内存检测">
+<meta property="article:tag" content="PMU">
+<meta property="article:tag" content="蜜罐">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "跨进程内存读写的攻防博弈——从内核缺页陷阱到应用层数据溯源",
+  "url": "https://brszzz.github.io/2026/06/04/cross-process-memory-detection/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2026-06-04T09:01:00.000Z",
+  "dateModified": "2026-06-23T11:49:48.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2026/06/04/cross-process-memory-detection/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '跨进程内存读写的攻防博弈——从内核缺页陷阱到应用层数据溯源',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">35</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">132</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div><div class="menus_item"><a class="site-page" href="/video-player/"><i class="fa-fw fas fa-play"></i><span> video player</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">跨进程内存读写的攻防博弈——从内核缺页陷阱到应用层数据溯源</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div><div class="menus_item"><a class="site-page" href="/video-player/"><i class="fa-fw fas fa-play"></i><span> video player</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">跨进程内存读写的攻防博弈——从内核缺页陷阱到应用层数据溯源</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-06-04T09:01:00.000Z" title="发表于 2026-06-04 17:01:00">2026-06-04</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-23T11:49:48.000Z" title="更新于 2026-06-23 19:49:48">2026-06-23</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E5%AE%89%E5%85%A8%E5%88%86%E6%9E%90/">安全分析</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">53k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>3:14分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="跨进程内存读写的攻防博弈：从内核缺页陷阱到应用层数据溯源"><a href="#跨进程内存读写的攻防博弈：从内核缺页陷阱到应用层数据溯源" class="headerlink" title="跨进程内存读写的攻防博弈：从内核缺页陷阱到应用层数据溯源"></a>跨进程内存读写的攻防博弈：从内核缺页陷阱到应用层数据溯源</h1><blockquote>
+<p>ARM64 Android 平台 <code>process_vm_readv</code> &#x2F; <code>process_vm_writev</code> 检测方法的完整探索、实验验证与攻防进化</p>
+</blockquote>
+<h2 id="摘要"><a href="#摘要" class="headerlink" title="摘要"></a>摘要</h2><p>本文系统研究 Android ARM64 平台上跨进程内存读写的可检测性。通过构建检测框架（detector）与攻击工具（attacker），在 Linux 5.4.210 内核上实测了 mincore 自检、PerfEvent 跨通道测序、内存访问时延、ARMv8 PMU 硬件计数器、kprobes 内核挂钩、应用层蜜罐令牌等十余种检测方法。核心发现：MADV_DONTNEED 陷阱页 + mincore 自检构成最强用户态检测信号；perf_event 与 &#x2F;proc&#x2F;self&#x2F;stat 在 FOLL_REMOTE 缺页会计上的不一致形成高信噪比侧信道；但 root 权限的攻击者通过逐页 &#x2F;proc&#x2F;pid&#x2F;pagemap 探测可将内存层副作用压缩至 0.13% 误读率（31&#x2F;23936），D5 DTLB +101%、D6 RefLat -33% 等 PMU 级残留信号仍不可消除；用户态攻防的最终防线转移至应用层数据使用检测。本文还探索了 ARMv8 PMU 硬件计数器、LLCC-PMU、REMOTE_ACCESS 等五个硬件方向的可行性，均因 task-context 隔离或 SELinux 限制而失败。</p>
+<hr>
+<h2 id="1-项目概述"><a href="#1-项目概述" class="headerlink" title="1. 项目概述"></a>1. 项目概述</h2><p>本项目实现了一套 Android ARM64 平台上对 <code>process_vm_readv</code> &#x2F; <code>process_vm_writev</code> 跨进程内存读写的检测框架，包含：</p>
+<ul>
+<li><strong>detector</strong>：检测守护进程，监控自身内存是否被外部进程读写</li>
+<li><strong>attacker</strong>：攻击模拟工具，使用 <code>process_vm_readv/writev</code> 读写目标进程内存</li>
+</ul>
+<h3 id="权限模型"><a href="#权限模型" class="headerlink" title="权限模型"></a>权限模型</h3><p>本文中攻击者始终为 <strong>root 权限</strong>，防御者为 <strong>非 root 用户权限</strong>。攻击者通过 <code>/proc/&lt;pid&gt;/pagemap</code> 实现跨进程内存布局探测。<code>mincore()</code> 只能检查调用者自身地址空间的 PTE，无法跨进程使用——防御者用它自检是合法的，攻击者的跨进程探测手段始终是 pagemap（需 root）。</p>
+<hr>
+<h2 id="2-检测方法总览"><a href="#2-检测方法总览" class="headerlink" title="2. 检测方法总览"></a>2. 检测方法总览</h2><table>
+<thead>
+<tr>
+<th>方法</th>
+<th>原理</th>
+<th align="center">检测读</th>
+<th align="center">检测写</th>
+<th>本设备实测</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>mincore</strong></td>
+<td>MADV_DONTNEED 回收页面后检查是否变 resident</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td>✅ 有效</td>
+</tr>
+<tr>
+<td><strong>Canary</strong></td>
+<td>内存末尾嵌入校验值，比对是否被篡改</td>
+<td align="center">❌</td>
+<td align="center">✅</td>
+<td>✅ 有效</td>
+</tr>
+<tr>
+<td><strong>Swap</strong></td>
+<td>MADV_PAGEOUT 换出后检查 VmSwap 是否下降</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>❌ process_vm_readv 不走 swap-in</td>
+</tr>
+<tr>
+<td><strong>Referenced</strong></td>
+<td>&#x2F;proc&#x2F;smaps Referenced 位检查</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>❌ FOLL_REMOTE 不置 Accessed</td>
+</tr>
+<tr>
+<td><strong>CacheFlush</strong></td>
+<td>dc civac 刷缓存后测访问延迟</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>❌ 该设备内核拦截用户态 dc civac</td>
+</tr>
+<tr>
+<td><strong>GuardPage</strong></td>
+<td>PROT_NONE 守卫页包围数据区</td>
+<td align="center">❌</td>
+<td align="center">✅</td>
+<td>仅写检测有效</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="3-mincore-pagemap-绕过分析"><a href="#3-mincore-pagemap-绕过分析" class="headerlink" title="3. mincore&#x2F;pagemap 绕过分析"></a>3. mincore&#x2F;pagemap 绕过分析</h2><h3 id="3-1-关键前提：mincore-不能跨进程探测"><a href="#3-1-关键前提：mincore-不能跨进程探测" class="headerlink" title="3.1 关键前提：mincore() 不能跨进程探测"></a>3.1 关键前提：mincore() 不能跨进程探测</h3><p><code>mincore()</code> 只能检查<strong>调用者自身</strong>地址空间的 PTE。外部攻击者无法用 <code>mincore()</code> 探测目标进程的内存驻留状态。跨进程驻留探测的唯一用户态手段是 <code>/proc/&lt;pid&gt;/pagemap</code>（需 root 权限或相同 UID）。</p>
+<h3 id="3-2-原始绕过（独立-mincore-region）"><a href="#3-2-原始绕过（独立-mincore-region）" class="headerlink" title="3.2 原始绕过（独立 mincore_region）"></a>3.2 原始绕过（独立 mincore_region）</h3><p>攻击者通过 <code>/proc/&lt;pid&gt;/pagemap</code> 探测目标进程内存布局（bit 63 &#x3D; page present）：发现连续 2MB evicted 区域 → 这是独立的 <code>mincore_region</code> → 直接跳过；读其他 resident 页面 → 不触发任何检测。</p>
+<h3 id="3-3-修复1：陷阱页散布"><a href="#3-3-修复1：陷阱页散布" class="headerlink" title="3.3 修复1：陷阱页散布"></a>3.3 修复1：陷阱页散布</h3><p>取消独立 <code>mincore_region</code>，改为在 <code>ref_region</code>（2MB 数据区）内散布 64 个陷阱页。</p>
+<p><strong>攻击者 pagemap 视角</strong>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">X..............X......X......X......X......X......X......X......</span><br></pre></td></tr></table></figure>
+
+<p>（X &#x3D; 陷阱&#x2F;evicted，. &#x3D; 数据&#x2F;resident）</p>
+<p>攻击者需逐页探测 512 次才能避开所有陷阱。<strong>限制</strong>：陷阱位置静态，攻击者探测一次即可永久避开。</p>
+<h3 id="3-4-修复2：陷阱轮换"><a href="#3-4-修复2：陷阱轮换" class="headerlink" title="3.4 修复2：陷阱轮换"></a>3.4 修复2：陷阱轮换</h3><p>每轮扫描后：</p>
+<ol>
+<li>恢复旧陷阱页（写入数据使其变 resident）</li>
+<li>用 <code>cntvct_el0 ^ round</code> 做种子重新随机选取陷阱</li>
+<li>回收新陷阱页</li>
+</ol>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">uint64_t</span> tsc;</span><br><span class="line">__asm__ __volatile__(<span class="string">&quot;mrs %0, cntvct_el0&quot;</span> : <span class="string">&quot;=r&quot;</span>(tsc));</span><br><span class="line"><span class="type">int</span> seed = (<span class="type">int</span>)((tsc ^ (tsc &gt;&gt; <span class="number">12</span>) ^ (ctx-&gt;round * <span class="number">0x9E3779B9</span>)) &amp; <span class="number">0xFFFF</span>);</span><br></pre></td></tr></table></figure>
+
+<p><strong>效果</strong>：陷阱位置每轮变化，攻击者探测立即过时。</p>
+<h3 id="3-5-残留绕过"><a href="#3-5-残留绕过" class="headerlink" title="3.5 残留绕过"></a>3.5 残留绕过</h3><p>pagemap 读取极快（pread 单次 8 字节、无需遍历页表），攻击者可在轮换间隔内完成：读 <code>/proc/&lt;pid&gt;/pagemap</code> → 获知当前陷阱分布 → 读安全页 → 在下一轮轮换前完成。</p>
+<p><strong>根本原因</strong>：pagemap 只读页表查询，不修改 PTE、不触发缺页、不改变任何被监控页状态。</p>
+<hr>
+<h2 id="4-MinFlt-检测"><a href="#4-MinFlt-检测" class="headerlink" title="4. MinFlt 检测"></a>4. MinFlt 检测</h2><h3 id="4-1-原理"><a href="#4-1-原理" class="headerlink" title="4.1 原理"></a>4.1 原理</h3><p><code>process_vm_readv</code> 内核路径：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">process_vm_readv → pin_user_pages_remote → __get_user_pages → faultin_page</span><br><span class="line">→ handle_mm_fault → 目标进程 min_flt++</span><br></pre></td></tr></table></figure>
+
+<p>读已回收（MADV_DONTNEED）页面会触发目标进程 minor page fault。监控 <code>/proc/self/stat</code> 的 <code>min_flt</code> 字段可检测。</p>
+<h3 id="4-2-实测基线"><a href="#4-2-实测基线" class="headerlink" title="4.2 实测基线"></a>4.2 实测基线</h3><p>无攻击时每轮 <code>min_flt +64~67 (self:~74)</code>。detector 自身活动产生 64-67 faults&#x2F;round。噪声 ~±7。外部需读 &gt;7 页才超噪底。</p>
+<h3 id="4-3-局限"><a href="#4-3-局限" class="headerlink" title="4.3 局限"></a>4.3 局限</h3><ul>
+<li>信噪比低：少量读取 (&lt; 7 页) 时信号淹没在噪声中</li>
+<li>读 resident 页不产生 fault，不触发</li>
+<li>pagemap 预探测 + 仅读 resident 页可绕过</li>
+<li>与 mincore 互补：mincore 检读陷阱页，MinFlt 检大规模读取</li>
+</ul>
+<hr>
+<h2 id="5-perf-event-tracepoint-尝试"><a href="#5-perf-event-tracepoint-尝试" class="headerlink" title="5. perf_event tracepoint 尝试"></a>5. perf_event tracepoint 尝试</h2><h3 id="5-1-方案"><a href="#5-1-方案" class="headerlink" title="5.1 方案"></a>5.1 方案</h3><p>用 <code>perf_event_open(PERF_TYPE_TRACEPOINT, raw_syscalls/sys_enter)</code> 全局捕获 syscall：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">raw_syscalls/sys_enter → 过滤 id==270 (process_vm_readv) + args[0]==本进程PID → 检测</span><br></pre></td></tr></table></figure>
+
+<h3 id="5-2-实测结果"><a href="#5-2-实测结果" class="headerlink" title="5.2 实测结果"></a>5.2 实测结果</h3><ul>
+<li><code>perf_event_open</code> 成功，ring buffer 收到事件</li>
+<li>但所有事件的 <code>id</code> 字段恒为 98 (futex)，从未出现 270</li>
+<li>ftrace 直接验证：<code>echo 1 &gt; raw_syscalls/enable</code> → <code>entries-written: 0</code></li>
+<li><strong>根因</strong>：该 Android 内核 (5.4.210) 的 <code>raw_syscalls</code> tracepoint 不生成事件（<code>CONFIG_FTRACE_SYSCALLS</code> 未完整配置）</li>
+</ul>
+<h3 id="5-3-结论"><a href="#5-3-结论" class="headerlink" title="5.3 结论"></a>5.3 结论</h3><p>perf_event tracepoint 方案在具备完整 syscall tracepoint 支持的内核上可用，但本设备不支持。代码已移除。</p>
+<hr>
+<h2 id="6-kprobes-检测方案"><a href="#6-kprobes-检测方案" class="headerlink" title="6. kprobes 检测方案"></a>6. kprobes 检测方案</h2><h3 id="6-1-原理"><a href="#6-1-原理" class="headerlink" title="6.1 原理"></a>6.1 原理</h3><p>不依赖 tracepoint，直接用 kprobe 钩在内核函数入口：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">__arm64_sys_process_vm_readv → process_vm_rw_core(pid, ...)</span><br></pre></td></tr></table></figure>
+
+<p><code>process_vm_rw_core</code> 第一个参数就是目标进程 PID，kprobe 捕获 <code>%x0</code> 即可。</p>
+<h3 id="6-2-设置"><a href="#6-2-设置" class="headerlink" title="6.2 设置"></a>6.2 设置</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">echo</span> <span class="string">&#x27;p:vmrw process_vm_rw_core pid=%x0&#x27;</span> &gt; /sys/kernel/tracing/kprobe_events</span><br><span class="line"><span class="built_in">echo</span> 1 &gt; /sys/kernel/tracing/events/kprobes/vmrw/enable</span><br></pre></td></tr></table></figure>
+
+<h3 id="6-3-实测输出"><a href="#6-3-实测输出" class="headerlink" title="6.3 实测输出"></a>6.3 实测输出</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">attacker-30442 → vmrw: process_vm_rw_core  pid=0x76df (=30431, detector PID)</span><br><span class="line">attacker-30445 → vmww: __arm64_sys_process_vm_writev  (writev 也捕获)</span><br></pre></td></tr></table></figure>
+
+<p><strong>精确捕获到 attacker 对 detector 的 process_vm_readv 和 process_vm_writev 调用。</strong></p>
+<h3 id="6-4-kprobe-vs-mincore-对比"><a href="#6-4-kprobe-vs-mincore-对比" class="headerlink" title="6.4 kprobe vs mincore 对比"></a>6.4 kprobe vs mincore 对比</h3><table>
+<thead>
+<tr>
+<th></th>
+<th>kprobes</th>
+<th>mincore</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>检测原理</td>
+<td>直接钩 syscall 入口</td>
+<td>检测页面常驻变化</td>
+</tr>
+<tr>
+<td>能否被 pagemap 绕过</td>
+<td>❌ 不可绕过</td>
+<td>✅ 可绕过</td>
+</tr>
+<tr>
+<td>是否误报</td>
+<td>否</td>
+<td>是（CacheFlush 始终误报）</td>
+</tr>
+<tr>
+<td>需要 root</td>
+<td>✅</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>检测 writev</td>
+<td>✅</td>
+<td>❌</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="7-perf-event-侧信道测序"><a href="#7-perf-event-侧信道测序" class="headerlink" title="7. perf_event 侧信道测序"></a>7. perf_event 侧信道测序</h2><h3 id="7-1-核心发现"><a href="#7-1-核心发现" class="headerlink" title="7.1 核心发现"></a>7.1 核心发现</h3><p>perf_event 和 &#x2F;proc&#x2F;self&#x2F;stat 对 <code>process_vm_readv</code> 触发的 minor page fault <strong>不一致</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>测量通道</th>
+<th>process_vm_readv 后</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/proc/self/stat</code> min_flt</td>
+<td><strong>有增量</strong> (+N faults)</td>
+<td><code>mm_account_fault</code> 通过 <code>FOLL_REMOTE</code> 路径累加到目标 mm 关联的 task</td>
+</tr>
+<tr>
+<td><code>perf_event(PERF_COUNT_SW_PAGE_FAULTS_MIN)</code></td>
+<td><strong>无增量</strong></td>
+<td><code>perf_sw_event()</code> 在 attacker 的 task context 触发，不递送到目标进程 perf counter</td>
+</tr>
+</tbody></table>
+<h3 id="7-2-跨通道检测原理"><a href="#7-2-跨通道检测原理" class="headerlink" title="7.2 跨通道检测原理"></a>7.2 跨通道检测原理</h3><p>利用两个通道的差异构成侧信道：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">external_faults = delta_min_flt - delta_perf_faults</span><br><span class="line">if external_faults &gt; 0 → process_vm_readv 检测到!</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><code>perf_event</code> 计数<strong>仅自身 task context</strong> 内的 fault（外部攻击不影响）</li>
+<li><code>/proc/self/stat</code> 计数<strong>全部</strong> fault（包括外部 <code>FOLL_REMOTE</code> 触发的）</li>
+<li>差值自动抵消自身活动，无需精确校准 <code>expected_self_faults</code></li>
+</ul>
+<h3 id="7-3-实测结果"><a href="#7-3-实测结果" class="headerlink" title="7.3 实测结果"></a>7.3 实测结果</h3><p><strong>无攻击基线</strong>（每轮 ~3-4ms task_clock，两侧完全同步）：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">Round 2   stat:+64  perf:+64  ext:+0   clock:3929us</span><br><span class="line">Round 3   stat:+64  perf:+64  ext:+0   clock:3605us</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p><strong>攻击</strong> — attacker 对 ref_region 执行 200 页 process_vm_readv，命中 25&#x2F;64 trap pages：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">--- Detector Round 8 ---</span><br><span class="line">mincore        | YES        | 25/64 trap pages resident</span><br><span class="line">MinFlt         | YES        | min_flt spike +89 (self ~74, excess 15)</span><br><span class="line">PerfEvent      | YES        | stat:+89 perf:+64 ext:+25 clock:4101us</span><br><span class="line">-----------------------------------------------------------------</span><br><span class="line">[!!!] 3 non-cache method(s) detected attack!</span><br></pre></td></tr></table></figure>
+
+<p><strong>关键对比</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>回合</th>
+<th align="center">stat (含外部)</th>
+<th align="center">perf (自身)</th>
+<th align="center">ext (外部fault)</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>基线 R2-R7</td>
+<td align="center">+64</td>
+<td align="center">+64</td>
+<td align="center"><strong>0</strong></td>
+<td>正常</td>
+</tr>
+<tr>
+<td>攻击 R8</td>
+<td align="center"><strong>+89</strong></td>
+<td align="center">+64</td>
+<td align="center"><strong>+25</strong></td>
+<td>✅ 检测</td>
+</tr>
+</tbody></table>
+<p>ext:+25 精确等于 mincore 的 25&#x2F;64 trap pages resident，证明每个外部 fault 都对应一个被 <code>process_vm_readv</code> 读回的陷阱页。</p>
+<h3 id="7-4-对比-MinFlt"><a href="#7-4-对比-MinFlt" class="headerlink" title="7.4 对比 MinFlt"></a>7.4 对比 MinFlt</h3><table>
+<thead>
+<tr>
+<th></th>
+<th>MinFlt (&#x2F;proc&#x2F;self&#x2F;stat)</th>
+<th>PerfEvent 跨通道</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>检测原理</td>
+<td>单通道绝对值 vs 预期校准值</td>
+<td>双通道差值</td>
+</tr>
+<tr>
+<td>需要校准</td>
+<td>✅ 需要 <code>expected_self_faults</code></td>
+<td>❌ 自动抵消自身活动</td>
+</tr>
+<tr>
+<td>信噪比</td>
+<td>低（excess&#x3D;2 时接近噪底）</td>
+<td>高（ext&#x3D;+25 时信号清晰）</td>
+</tr>
+<tr>
+<td>误报风险</td>
+<td>自身活动波动导致误报</td>
+<td>低（两边同时增加，差值不变）</td>
+</tr>
+</tbody></table>
+<h3 id="7-5-绕过分析"><a href="#7-5-绕过分析" class="headerlink" title="7.5 绕过分析"></a>7.5 绕过分析</h3><p><strong>pagemap 探测是否可检测？</strong> 实测：attacker 仅调用 pagemap probe，不执行 readv → 12 轮全部 ext:+0。<strong>pagemap 探测不可检测</strong>。<code>pagemap_read()</code> 只读内核页表（<code>mmap_read_lock</code> + PTE 遍历），不修改 PTE、不触发 fault、不在目标 task context 产生 perf event。</p>
+<p><strong>pagemap + 仅读 resident 页能否绕过？</strong> 实测：448&#x2F;512 页 (87.5%) 为 resident 数据页，可被安全读取。完整绕过链：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">1. pagemap probe  →  获知 X (evicted/trap) vs . (resident/data)</span><br><span class="line">2. process_vm_readv 仅读 . (resident) 页  →  0 次 fault</span><br><span class="line">3. detector: ext = 0, mincore 0 trap resident  →  无报警</span><br></pre></td></tr></table></figure>
+
+<p><strong>绕过的对抗——trap 轮换</strong>：攻击者必须 pagemap 探测后、下一轮轮换前完成读取。一旦轮换触发，旧 trap 恢复、新 trap 回收，pagemap 探测结果立即过时。缩短 detector 扫描间隔可压缩攻击窗口。</p>
+<hr>
+<h2 id="8-ARM64-硬件-PMU-检测方案研究"><a href="#8-ARM64-硬件-PMU-检测方案研究" class="headerlink" title="8. ARM64 硬件 PMU 检测方案研究"></a>8. ARM64 硬件 PMU 检测方案研究</h2><h3 id="8-1-测试环境"><a href="#8-1-测试环境" class="headerlink" title="8.1 测试环境"></a>8.1 测试环境</h3><table>
+<thead>
+<tr>
+<th>项目</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>SoC</td>
+<td>Qualcomm (Cortex-A55 x4 + Cortex-A75 x2+)</td>
+</tr>
+<tr>
+<td>PMU</td>
+<td>ARMv8 PMUv3</td>
+</tr>
+<tr>
+<td>内核</td>
+<td>5.4.210-qgki</td>
+</tr>
+<tr>
+<td>perf_event_paranoid</td>
+<td>-1</td>
+</tr>
+<tr>
+<td>UID</td>
+<td>2000 (shell)</td>
+</tr>
+<tr>
+<td>SELinux</td>
+<td>Enforcing</td>
+</tr>
+</tbody></table>
+<h3 id="8-2-五个探索方向"><a href="#8-2-五个探索方向" class="headerlink" title="8.2 五个探索方向"></a>8.2 五个探索方向</h3><h4 id="方向-1：系统级监控-pid-1-cpu-N"><a href="#方向-1：系统级监控-pid-1-cpu-N" class="headerlink" title="方向 1：系统级监控 (pid&#x3D;-1, cpu&#x3D;N)"></a>方向 1：系统级监控 (pid&#x3D;-1, cpu&#x3D;N)</h4><p>绕过 task-context 隔离的最直接方法——监控整个 CPU 而非特定进程。所有 CPU (0-7)、所有 event type 均返回 EACCES。<strong>SELinux 阻止了 shell 用户进行系统级 PMU 监控</strong>，即使 paranoia&#x3D;-1。</p>
+<h4 id="方向-2：Qualcomm-LLCC-PMU（系统级-Cache-Controller）"><a href="#方向-2：Qualcomm-LLCC-PMU（系统级-Cache-Controller）" class="headerlink" title="方向 2：Qualcomm LLCC-PMU（系统级 Cache Controller）"></a>方向 2：Qualcomm LLCC-PMU（系统级 Cache Controller）</h4><p>LLCC (Last Level Cache Controller) PMU 是系统级 uncore PMU，理论上可观测所有处理器的缓存流量。设备节点存在 (<code>/sys/devices/platform/soc/9095000.llcc-pmu</code>)，模块已加载 (<code>llcc_perfmon</code>)，但 sysfs type 文件不可读（SELinux），events 目录不存在，pid&#x3D;-1 打开全部 EACCES。<strong>硬件存在但用户态完全无法访问</strong>。</p>
+<h4 id="方向-3：ARMv8-RAW-Event-编码探索"><a href="#方向-3：ARMv8-RAW-Event-编码探索" class="headerlink" title="方向 3：ARMv8 RAW Event 编码探索"></a>方向 3：ARMv8 RAW Event 编码探索</h4><p>无法读取 <code>/sys/bus/.../format/event</code> 文件（SELinux），只能盲测 raw event 编码。</p>
+<table>
+<thead>
+<tr>
+<th>事件码</th>
+<th>名称</th>
+<th>自访问计数</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0x11</td>
+<td>CPU_CYCLES</td>
+<td>376K delta</td>
+<td>正常工作</td>
+</tr>
+<tr>
+<td>0x3100</td>
+<td>REMOTE_ACCESS?</td>
+<td>微弱 (172)</td>
+<td>仅 busy-loop 自身产生</td>
+</tr>
+<tr>
+<td>0x03</td>
+<td>L1D_CACHE_REFILL</td>
+<td>始终 0</td>
+<td>编码不匹配或未实现</td>
+</tr>
+<tr>
+<td>0x17</td>
+<td>L2D_CACHE_REFILL</td>
+<td>延迟激活</td>
+<td>multiplexing 调度到时才有值</td>
+</tr>
+</tbody></table>
+<p><strong>REMOTE_ACCESS (0x31) 深入测试</strong>：ARMv8 事件 0x31 定义”来自其他处理器的访问”——检测跨进程内存访问最理想的 PMU 事件。config&#x3D;0x0031 和 config&#x3D;0x3100 均无信号，<strong>受控实验中攻击阶段与控制组无差异</strong>。</p>
+<h4 id="方向-4：PERF-TYPE-HW-CACHE-测试"><a href="#方向-4：PERF-TYPE-HW-CACHE-测试" class="headerlink" title="方向 4：PERF_TYPE_HW_CACHE 测试"></a>方向 4：PERF_TYPE_HW_CACHE 测试</h4><ul>
+<li>L1D_READ_ACCESS: 工作 (111K delta, 自访问)</li>
+<li>L1D_READ_MISS: 工作 (3K delta, 自访问)</li>
+<li>LL_READ_ACCESS: <strong>ENOENT</strong>（该硬件不支持 LL cache 事件）</li>
+<li>LL_READ_MISS: <strong>ENOENT</strong></li>
+<li>DTLB_READ_ACCESS&#x2F;DTLB_READ_MISS: 工作</li>
+</ul>
+<p>LL（Last Level）cache 事件不可用，无法通过通用接口监控 L3 缓存。</p>
+<h4 id="方向-5：未知-PMU-Type-8-10"><a href="#方向-5：未知-PMU-Type-8-10" class="headerlink" title="方向 5：未知 PMU Type 8 &amp; 10"></a>方向 5：未知 PMU Type 8 &amp; 10</h4><table>
+<thead>
+<tr>
+<th>Type</th>
+<th>pid&#x3D;0 行为</th>
+<th>pid&#x3D;-1 行为</th>
+<th>推测</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>8</td>
+<td>多种 event 产生有效计数</td>
+<td>EACCES</td>
+<td>CPU PMU 别名或 DSU PMU</td>
+</tr>
+<tr>
+<td>10</td>
+<td>所有 event delta&#x3D;0</td>
+<td>EACCES</td>
+<td>可能是未初始化的 llcc-pmu</td>
+</tr>
+</tbody></table>
+<h3 id="8-3-严格受控实验：跨进程攻击-PMU-信号"><a href="#8-3-严格受控实验：跨进程攻击-PMU-信号" class="headerlink" title="8.3 严格受控实验：跨进程攻击 PMU 信号"></a>8.3 严格受控实验：跨进程攻击 PMU 信号</h3><p><strong>实验设计</strong>：父进程 busy-loop 维持 CPU 上下文 + 四阶段对照（IDLE&#x2F;CTRL&#x2F;ATTACK&#x2F;VERIFY）。</p>
+<p><strong>实测结果</strong>（所有 HW&#x2F;RAW 计数器）：</p>
+<table>
+<thead>
+<tr>
+<th>Counter</th>
+<th>IDLE</th>
+<th>CTRL</th>
+<th>ATTACK</th>
+<th>VERIFY</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>HW_CACHE_MISS</td>
+<td>0-428</td>
+<td>0-301</td>
+<td>0</td>
+<td>0-679</td>
+<td>无差异</td>
+</tr>
+<tr>
+<td>HW_BUS_CYCLES</td>
+<td>0-516K</td>
+<td>0-1.4M</td>
+<td>0-1.37M</td>
+<td>0-708K</td>
+<td>无差异</td>
+</tr>
+<tr>
+<td>REMOTE_0x3100</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>无信号</td>
+</tr>
+<tr>
+<td>BUS_0x1900</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>无信号</td>
+</tr>
+<tr>
+<td>SW_FAULTS</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+<td>无信号</td>
+</tr>
+</tbody></table>
+<p><strong>结论：所有 HW&#x2F;RAW 计数器在攻击阶段与控制组无显著差异。</strong> 父进程 PMU 只反映自身 busy-loop 活动量，不反映子进程跨进程内存访问。</p>
+<h3 id="8-4-根因分析"><a href="#8-4-根因分析" class="headerlink" title="8.4 根因分析"></a>8.4 根因分析</h3><p>ARM64 PMU task-context 隔离机制，三个潜在绕过路径均被阻塞：</p>
+<table>
+<thead>
+<tr>
+<th>绕过路径</th>
+<th align="center">状态</th>
+<th>阻塞原因</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>系统级监控 (pid&#x3D;-1)</td>
+<td align="center">FAIL</td>
+<td>SELinux EACCES</td>
+</tr>
+<tr>
+<td>llcc-pmu (uncore)</td>
+<td align="center">FAIL</td>
+<td>sysfs 不可读 + pid&#x3D;-1 EACCES</td>
+</tr>
+<tr>
+<td>REMOTE_ACCESS event (0x31)</td>
+<td align="center">FAIL</td>
+<td>仍受 task-context 限制</td>
+</tr>
+<tr>
+<td>缓存一致性流量 (HW_BUS_CYCLES)</td>
+<td align="center">FAIL</td>
+<td>仅计数本 task 调度时段</td>
+</tr>
+</tbody></table>
+<h3 id="8-5-PMU-研究最终结论"><a href="#8-5-PMU-研究最终结论" class="headerlink" title="8.5 PMU 研究最终结论"></a>8.5 PMU 研究最终结论</h3><p><strong>ARM64 硬件 PMU 在用户态下无法检测 process_vm_readv。</strong> 这不是权限问题（paranoia&#x3D;-1 名义上允许所有事件），也不是编码错误（通过各种编码尝试和对照实验排除），而是 ARM PMU 架构的根本设计——task-context 隔离使目标进程的 PMU 无法感知其他进程的微架构事件。系统级 PMU（uncore&#x2F;DSU&#x2F;LLCC）理论上可绕过隔离，但 SELinux 阻止了用户态访问。用户态下唯一有效方案是已验证的 <strong>PerfEvent 跨通道测序</strong>。</p>
+<hr>
+<h2 id="9-内存访问时延检测"><a href="#9-内存访问时延检测" class="headerlink" title="9. 内存访问时延检测"></a>9. 内存访问时延检测</h2><h3 id="9-1-原理"><a href="#9-1-原理" class="headerlink" title="9.1 原理"></a>9.1 原理</h3><p>不依赖 perf_event 或 mincore，纯用户态计时区分驻留页与非驻留页：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">非驻留页: MADV_DONTNEED 回收 → 访问触发缺页 → ~2000-5000ns</span><br><span class="line">驻留页:   已在物理内存中 → 访问走缓存 → ~50-150ns</span><br><span class="line">差异: ~20-50x，clock_gettime 分辨率 (~50ns) 足以分辨</span><br></pre></td></tr></table></figure>
+
+<h3 id="9-2-校准数据"><a href="#9-2-校准数据" class="headerlink" title="9.2 校准数据"></a>9.2 校准数据</h3><table>
+<thead>
+<tr>
+<th>访问类型</th>
+<th>时延</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>驻留页（缓存命中）</td>
+<td>p50&#x3D;52ns, p99&#x3D;105ns</td>
+<td>直接 L1 缓存访问</td>
+</tr>
+<tr>
+<td>非驻留页（缺页）</td>
+<td>min&#x3D;1823ns, median&#x3D;1927ns</td>
+<td>内核缺页处理</td>
+</tr>
+<tr>
+<td>clock_gettime 开销</td>
+<td>52-104ns</td>
+<td>测量噪声</td>
+</tr>
+<tr>
+<td>检测阈值</td>
+<td>5x resident p99 &#x3D; 525ns</td>
+<td>动态校准</td>
+</tr>
+</tbody></table>
+<h3 id="9-3-检测流程"><a href="#9-3-检测流程" class="headerlink" title="9.3 检测流程"></a>9.3 检测流程</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">madvise(DONTNEED) → 所有陷阱页非驻留</span><br><span class="line">       ↓</span><br><span class="line">  等待窗口 (200ms) ← attacker 的 process_vm_readv 触发 FOLL_REMOTE 缺页</span><br><span class="line">       ↓</span><br><span class="line">  定时探测: clock_gettime + 读操作计时</span><br><span class="line">       ↓</span><br><span class="line">  dt &lt; 525ns → 页已驻留 → 有外部访问</span><br><span class="line">  dt &gt; 1800ns → 页仍缺页 → 无外部访问</span><br></pre></td></tr></table></figure>
+
+<h3 id="9-4-实测结果"><a href="#9-4-实测结果" class="headerlink" title="9.4 实测结果"></a>9.4 实测结果</h3><ul>
+<li><strong>基线（无攻击）</strong>：20 轮 Fast&#x3D;0，零假阳性</li>
+<li><strong>攻击检出</strong>：匹配 attacker 读 16 页命中约 4 个 trap（25% 密度）</li>
+<li><strong>信号对比</strong>：驻留页 156ns vs 缺页 1875ns，12:1 信噪比</li>
+</ul>
+<h3 id="9-5-优势与局限"><a href="#9-5-优势与局限" class="headerlink" title="9.5 优势与局限"></a>9.5 优势与局限</h3><p><strong>优势</strong>：不需要 CONFIG_PERF_EVENTS，不需要 mincore() 系统调用，纯用户态，attacker 无法感知（无 syscall 痕迹）。</p>
+<p><strong>局限</strong>：与所有 fault 类检测共享同一个根本弱点——依赖非驻留陷阱页。攻击者可通过 <code>/proc/&lt;pid&gt;/pagemap</code> 预探测避开。</p>
+<hr>
+<h2 id="10-陷阱轮换-vs-pagemap-预探测——竞态窗口测试"><a href="#10-陷阱轮换-vs-pagemap-预探测——竞态窗口测试" class="headerlink" title="10. 陷阱轮换 vs pagemap 预探测——竞态窗口测试"></a>10. 陷阱轮换 vs pagemap 预探测——竞态窗口测试</h2><h3 id="10-1-架构说明"><a href="#10-1-架构说明" class="headerlink" title="10.1 架构说明"></a>10.1 架构说明</h3><p>以下竞态测试采用独立进程架构：防御者进程（非 root 用户）和攻击者进程（root 权限）完全独立，不共享内存。防御者启动后输出其 PID 和内存地址；攻击者通过命令行参数获取目标信息，使用 <code>/proc/&lt;pid&gt;/pagemap</code>（root 权限）做跨进程探测，使用 <code>process_vm_readv</code> 做跨进程读取。</p>
+<h3 id="10-2-测试设计"><a href="#10-2-测试设计" class="headerlink" title="10.2 测试设计"></a>10.2 测试设计</h3><p>Defender 每轮轮换陷阱页（MADV_DONTNEED 新集合），Attacker 先 pagemap 预探测再长时间读取。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">Defender: ─── 陷阱集A ─── 陷阱集B ─── 陷阱集C ───</span><br><span class="line">           | 200ms | 200ms | 200ms |</span><br><span class="line"></span><br><span class="line">Attacker:  [pagemap探测]────── 逐页 process_vm_readv ──────]</span><br><span class="line">           |← 竞态窗口 (3-320ms) →|</span><br></pre></td></tr></table></figure>
+
+<h3 id="10-3-实测结果（独立进程）"><a href="#10-3-实测结果（独立进程）" class="headerlink" title="10.3 实测结果（独立进程）"></a>10.3 实测结果（独立进程）</h3><p>测试参数：256 页缓冲区，64 个陷阱页 (25%)，200ms 轮换周期，64 页读取量。</p>
+<table>
+<thead>
+<tr>
+<th align="center">页间延迟</th>
+<th>读取窗口</th>
+<th align="center">vs 200ms轮换</th>
+<th align="center">readv故障</th>
+<th align="center">检出</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="center">0ms</td>
+<td>~3ms</td>
+<td align="center">远小于</td>
+<td align="center">0</td>
+<td align="center">❌ 0%</td>
+</tr>
+<tr>
+<td align="center">1ms</td>
+<td>~67ms</td>
+<td align="center">小于</td>
+<td align="center">0</td>
+<td align="center">❌ 0%</td>
+</tr>
+<tr>
+<td align="center">2ms</td>
+<td>~131ms</td>
+<td align="center">临界重叠</td>
+<td align="center">0</td>
+<td align="center">❌ 0%</td>
+</tr>
+<tr>
+<td align="center">3ms</td>
+<td>~195ms</td>
+<td align="center">接近重叠</td>
+<td align="center">0</td>
+<td align="center">⚠️ 20%</td>
+</tr>
+<tr>
+<td align="center">5ms</td>
+<td>~323ms</td>
+<td align="center">完全跨越</td>
+<td align="center">0</td>
+<td align="center">⚠️ 20%</td>
+</tr>
+</tbody></table>
+<p><strong>与 fork+MAP_SHARED 模拟的关键差异</strong>：原始 fork 模拟实验报告了 93% 检出率 (5ms 延迟)。独立进程架构下，攻击者的 pagemap 探测直接读取目标进程页表（一次 pread 8 字节），探测速度极快 (~0.7ms 扫描 256 页)，批量 readv 后无回读确认。process_vm_readv 命中已回收页时会触发 FOLL_REMOTE 缺页（目标 min_flt 增加），但 readv 返回成功（内核自动补页），攻击者侧无感知。防御者侧的 min_flt 偶尔能捕获这些外部 fault，但信号不稳定。</p>
+<hr>
+<h2 id="11-逐页-pagemap——用户态攻防的终点"><a href="#11-逐页-pagemap——用户态攻防的终点" class="headerlink" title="11. 逐页 pagemap——用户态攻防的终点"></a>11. 逐页 pagemap——用户态攻防的终点</h2><h3 id="11-1-攻击升级"><a href="#11-1-攻击升级" class="headerlink" title="11.1 攻击升级"></a>11.1 攻击升级</h3><p>攻击者将”先探测再批量读”改为”每读一页前都通过 pagemap 检查”：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">传统方案: pagemap(全部) → readv(p1) → readv(p2) → ... → readv(pN)</span><br><span class="line">                              |← 竞态窗口可达数百ms →|</span><br><span class="line"></span><br><span class="line">逐页方案: pagemap(p1)→readv(p1) → pagemap(p2)→readv(p2) → ...</span><br><span class="line">                 |← 17μs →|          |← 17μs →|</span><br></pre></td></tr></table></figure>
+
+<h3 id="11-2-实测数据"><a href="#11-2-实测数据" class="headerlink" title="11.2 实测数据"></a>11.2 实测数据</h3><p>逐页 pagemap + readv，512 页缓冲区（64 traps），200ms 轮换周期：</p>
+<p><strong>攻击者侧 — 逐页 pagemap 判断 + 跳过非驻留页</strong>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">Initial probe: 448 resident, 64 evicted (12.5% traps)</span><br><span class="line"></span><br><span class="line">逐页结果 (512 页全量):</span><br><span class="line">  pagemap → resident → READ  → OK:   448 页 (87.5%)</span><br><span class="line">  pagemap → evicted  → SKIP → -:     64 页 (12.5%)</span><br><span class="line">  readv 失败:                           0 页 (0%)</span><br><span class="line"></span><br><span class="line">  Avg pagemap 耗时: 1871 ns/page</span><br><span class="line">  Avg readv 耗时:   ~3300 ns/page</span><br><span class="line">  陷阱规避率:      100% (64/64 traps correctly skipped)</span><br></pre></td></tr></table></figure>
+
+<p><strong>防御者侧</strong>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">Baseline:        64 min_flt/round</span><br><span class="line">trap_resident:    0 (全程)</span><br><span class="line">min_flt delta:   64 (=baseline)</span><br><span class="line">excess:           0</span><br><span class="line">Status:          - (无检出)</span><br></pre></td></tr></table></figure>
+
+<h3 id="11-3-竞态窗口计算"><a href="#11-3-竞态窗口计算" class="headerlink" title="11.3 竞态窗口计算"></a>11.3 竞态窗口计算</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">逐页窗口 = pagemap pread(8 bytes) + readv = ~3-6μs</span><br><span class="line">轮换周期 = 200ms = 200,000μs</span><br><span class="line">命中概率 = 4 / 200,000 = 0.002%</span><br><span class="line">→ 约 50,000 次读取才期望命中 1 次陷阱</span><br></pre></td></tr></table></figure>
+
+<h3 id="11-4-代价对比"><a href="#11-4-代价对比" class="headerlink" title="11.4 代价对比"></a>11.4 代价对比</h3><table>
+<thead>
+<tr>
+<th></th>
+<th align="center">批量预探测</th>
+<th align="center">逐页 pagemap</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>竞态窗口</td>
+<td align="center">3-320ms</td>
+<td align="center"><strong>3-6μs</strong></td>
+</tr>
+<tr>
+<td>陷阱命中率</td>
+<td align="center">0-20%</td>
+<td align="center"><strong>&lt;0.01%</strong></td>
+</tr>
+<tr>
+<td>内存侧信道可检测</td>
+<td align="center">⚠️ 偶发</td>
+<td align="center"><strong>❌ 不可检测</strong></td>
+</tr>
+<tr>
+<td>syscall 次数 (64页)</td>
+<td align="center">65</td>
+<td align="center">128</td>
+</tr>
+<tr>
+<td>syscall 特征</td>
+<td align="center">低</td>
+<td align="center">高（交替 pagemap+readv 模式）</td>
+</tr>
+<tr>
+<td>读取吞吐</td>
+<td align="center">高</td>
+<td align="center">降低 ~50%</td>
+</tr>
+</tbody></table>
+<h3 id="11-5-极限竞态测试"><a href="#11-5-极限竞态测试" class="headerlink" title="11.5 极限竞态测试"></a>11.5 极限竞态测试</h3><table>
+<thead>
+<tr>
+<th>轮换速度</th>
+<th>持续时间</th>
+<th>攻击读取量</th>
+<th>跳过率</th>
+<th align="center">readv 失败</th>
+<th>平均窗口</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>200ms</td>
+<td>10s</td>
+<td>3.47M</td>
+<td>12.11%</td>
+<td align="center">0</td>
+<td>2.5μs</td>
+</tr>
+<tr>
+<td>50ms</td>
+<td>10s</td>
+<td>3.01M</td>
+<td>12.67%</td>
+<td align="center">0</td>
+<td>2.9μs</td>
+</tr>
+<tr>
+<td>10ms</td>
+<td>10s</td>
+<td>2.97M</td>
+<td>12.98%</td>
+<td align="center">0</td>
+<td>2.9μs</td>
+</tr>
+<tr>
+<td><strong>0ms（忙循环）</strong></td>
+<td><strong>10s</strong></td>
+<td><strong>2.15M</strong></td>
+<td><strong>19.86%</strong></td>
+<td align="center"><strong>0</strong></td>
+<td><strong>3.9μs</strong></td>
+</tr>
+</tbody></table>
+<p><strong>总计 ~11.6M 次 pagemap+readv 操作，0 次 readv 失败。</strong></p>
+<h3 id="11-6-pagemap-为什么不可检测"><a href="#11-6-pagemap-为什么不可检测" class="headerlink" title="11.6 pagemap 为什么不可检测"></a>11.6 pagemap 为什么不可检测</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">pagemap 读取路径 (/proc/&lt;pid&gt;/pagemap):</span><br><span class="line">  pread(fd, &amp;entry, 8, pfn*8)  // 只读 /proc 文件</span><br><span class="line">  → 内核: pagemap_read() → walk_page_range() (只读)</span><br><span class="line">  → 不修改 PTE，不触发缺页，不产生 I/O，不改变任何计数器</span><br><span class="line"></span><br><span class="line">mincore() (防御者自检) 同样不可检测:</span><br><span class="line">  down_read(mm-&gt;mmap_lock)    // 共享读锁</span><br><span class="line">  walk_page_range()           // 只读遍历页表</span><br><span class="line">  up_read(mm-&gt;mmap_lock)</span><br><span class="line"></span><br><span class="line">副作用: 无。不产生缺页，不修改 Accessed bit，不触发 I/O，不改变 stat</span><br></pre></td></tr></table></figure>
+
+<h3 id="11-7-攻防升级链"><a href="#11-7-攻防升级链" class="headerlink" title="11.7 攻防升级链"></a>11.7 攻防升级链</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">L1  直接 readv           →  PerfEvent跨通道 / 时延检测     ✅ 用户态可检测</span><br><span class="line">L2  pagemap预探测+批量读  →  陷阱轮换 (竞态窗口)           ✅ 用户态可检测</span><br><span class="line">L3  逐页 pagemap+readv   →  内存驻留检测几乎失效           ⚠️ 仅 PMU 级残留</span><br><span class="line">                            syscall 模式监控               🔒 需 root</span><br><span class="line">L4  —                    →  kprobes/eBPF 钩内核            🔒 需 root</span><br></pre></td></tr></table></figure>
+
+<h3 id="11-8-用户态攻防终止线"><a href="#11-8-用户态攻防终止线" class="headerlink" title="11.8 用户态攻防终止线"></a>11.8 用户态攻防终止线</h3><p>逐页 pagemap + process_vm_readv 将可检测的”缺页”替换为几乎不可检测的”页表只读查询”。从受害者视角，<code>/proc/self/stat</code> 和 <code>perf_event</code> 计数器几乎无变化——但并非绝对零信号：六维度 PMU 实验中 pagemap 模式仍有 31 次误读（0.13%），D5 DTLB Walk +101%、D6 RefLat -33%。<strong>攻击者无法完美隐身，残留信号仅 PMU 级别的统计检测可能捕获。</strong></p>
+<hr>
+<h2 id="12-应用层蜜罐——数据溯源检测"><a href="#12-应用层蜜罐——数据溯源检测" class="headerlink" title="12. 应用层蜜罐——数据溯源检测"></a>12. 应用层蜜罐——数据溯源检测</h2><h3 id="12-1-核心洞察"><a href="#12-1-核心洞察" class="headerlink" title="12.1 核心洞察"></a>12.1 核心洞察</h3><p><strong>把问题从”检测内存被读”转变为”检测数据被用”。</strong></p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">传统方法 (内核层):  内存访问 → 追踪内核副作用 (缺页/缓存/PMU)</span><br><span class="line">                          ↓ 逐页 pagemap 可消除所有内存副作用</span><br><span class="line">                          ↓ 用户态检测终点</span><br><span class="line"></span><br><span class="line">蜜罐方法 (应用层):  内存访问 → 获取数据 → 使用数据 → 产生可观测副作用</span><br><span class="line">                                               ↑</span><br><span class="line">                                          在这里检测!</span><br></pre></td></tr></table></figure>
+
+<p><strong>关键不对称优势</strong>：<code>pagemap</code>（攻击者跨进程探测）能区分驻留页 vs 非驻留页（躲避陷阱页），但<strong>不能区分合法数据 vs 蜜罐数据</strong>（两者都是驻留页中的普通字节）。防御者自身的 <code>mincore()</code> 同样只能做驻留&#x2F;非驻留判断，没有语义理解能力。</p>
+<h3 id="12-2-蜜罐令牌结构"><a href="#12-2-蜜罐令牌结构" class="headerlink" title="12.2 蜜罐令牌结构"></a>12.2 蜜罐令牌结构</h3><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#<span class="keyword">define</span> HONEYPOT_MAGIC 0x484F4E4559504F54ULL  <span class="comment">// &quot;HONEYPOT&quot;</span></span></span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">HoneypotToken</span> &#123;</span></span><br><span class="line">    <span class="type">uint64_t</span> magic;       <span class="comment">// 蜜罐标识 (固定魔数)</span></span><br><span class="line">    <span class="type">uint64_t</span> region_id;   <span class="comment">// 内存区域标识 (溯源到具体数据区)</span></span><br><span class="line">    <span class="type">uint64_t</span> token_seq;   <span class="comment">// 区域内序号</span></span><br><span class="line">    <span class="type">uint64_t</span> checksum;    <span class="comment">// HMAC-like 校验 = hash(magic|region_id|seq|secret)</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>每个会话使用随机 <code>secret</code>，攻击者即使知道令牌格式，没有 <code>secret</code> 也无法区分真实令牌和随机数据（假阳性不可区分）。</p>
+<h3 id="12-3-三种蜜罐模式及实测"><a href="#12-3-三种蜜罐模式及实测" class="headerlink" title="12.3 三种蜜罐模式及实测"></a>12.3 三种蜜罐模式及实测</h3><h4 id="MODE-1：静态令牌嵌入（数据溯源）"><a href="#MODE-1：静态令牌嵌入（数据溯源）" class="headerlink" title="MODE 1：静态令牌嵌入（数据溯源）"></a>MODE 1：静态令牌嵌入（数据溯源）</h4><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">Defender:  在敏感缓冲区嵌入令牌 (与合法数据交织, 无法从字节区分)</span><br><span class="line">Attacker:  逐页 pagemap + process_vm_readv (root) → 读取全部内存</span><br><span class="line">           → 将数据写入输出信道 (模拟外泄/渲染)</span><br><span class="line">Defender:  扫描输出信道 → 检测令牌签名 → 确认内存被读取</span><br></pre></td></tr></table></figure>
+
+<p><strong>实测结果</strong>（<code>honeypot_test mode 1</code>）：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">Session secret: 0x6a227b5b4f779cf3</span><br><span class="line">[Defender] Embedded 16 tokens in 1048576-byte buffer</span><br><span class="line">[Defender] Read 1048576 bytes from exfiltration channel</span><br><span class="line"></span><br><span class="line">*** MEMORY READ DETECTED! ***</span><br><span class="line">16 honeypot tokens found in attacker&#x27;s output</span><br><span class="line">Data provenance confirmed: region_id=1</span><br></pre></td></tr></table></figure>
+
+<p><strong>16&#x2F;16 令牌全部检出</strong>。攻击者无法用 pagemap 区分令牌页（全部在驻留页中）。</p>
+<h4 id="MODE-2：Liveness-Check（令牌逃逸检测）"><a href="#MODE-2：Liveness-Check（令牌逃逸检测）" class="headerlink" title="MODE 2：Liveness Check（令牌逃逸检测）"></a>MODE 2：Liveness Check（令牌逃逸检测）</h4><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">Defender:  创建 3 个区域 (region 100/200/300), 各有独立令牌</span><br><span class="line">           定期扫描外部监控信道 (模拟网络流量/日志监控)</span><br><span class="line">Attacker:  L3 攻击 (逐页 pagemap + readv) — 此前认为不可检测</span><br><span class="line">           → 将窃取的数据写入监控 buffer</span><br><span class="line">Defender:  Liveness 扫描 → 检测到令牌 → 确认内存被读</span><br></pre></td></tr></table></figure>
+
+<p><strong>实测结果</strong>（<code>honeypot_test mode 2</code>）：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">Region 100: 16 tokens</span><br><span class="line">Region 200: 16 tokens</span><br><span class="line">Region 300: 16 tokens</span><br><span class="line"></span><br><span class="line">Round    Status               Details</span><br><span class="line">0        clean                No tokens detected</span><br><span class="line">1        *** BREACH! ***      Tokens detected in monitor buffer</span><br><span class="line">  → 1 tokens from region(s): 100</span><br><span class="line">  → L3 attack (per-page pagemap) DETECTED via data provenance!</span><br></pre></td></tr></table></figure>
+
+<p><strong>L3 攻击被检测到</strong>。逐页 pagemap 可以在内存层消除所有副作用，但无法阻止数据在使用层被追踪。</p>
+<h4 id="MODE-3：自反噬陷阱值（使用即触发）"><a href="#MODE-3：自反噬陷阱值（使用即触发）" class="headerlink" title="MODE 3：自反噬陷阱值（使用即触发）"></a>MODE 3：自反噬陷阱值（使用即触发）</h4><p>在内存中放置特殊构造的值，攻击者解释并使用时产生可观测副作用。三种自反噬机制：</p>
+<ol>
+<li><strong>指针陷阱</strong>：<code>token = &amp;monitored_page</code>，攻击者解引用 → 访问被监控页 → 可检测</li>
+<li><strong>范围&#x2F;索引陷阱</strong>：<code>token = sentinel_array_index</code>，攻击者用作索引 → 访问哨兵元素 → 可检测</li>
+<li><strong>校验和陷阱</strong>：token 嵌入数据结构，攻击者输出中包含 token → 可鉴定来源</li>
+</ol>
+<h3 id="12-4-蜜罐-vs-陷阱页对比"><a href="#12-4-蜜罐-vs-陷阱页对比" class="headerlink" title="12.4 蜜罐 vs 陷阱页对比"></a>12.4 蜜罐 vs 陷阱页对比</h3><table>
+<thead>
+<tr>
+<th>维度</th>
+<th>陷阱页 (Trap Page)</th>
+<th>蜜罐令牌 (Honeypot Token)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>检测层</strong></td>
+<td>内存管理层（缺页）</td>
+<td>应用数据层（数据使用）</td>
+</tr>
+<tr>
+<td><strong>pagemap 能否区分</strong></td>
+<td>✅ 能（非驻留 vs 驻留）</td>
+<td>❌ 不能（都是普通字节）</td>
+</tr>
+<tr>
+<td><strong>竞态窗口问题</strong></td>
+<td>有（轮换 vs 探测）</td>
+<td>无（令牌始终在内存中）</td>
+</tr>
+<tr>
+<td><strong>检测时机</strong></td>
+<td>访问时（实时）</td>
+<td>使用时（事后&#x2F;实时）</td>
+</tr>
+<tr>
+<td><strong>前提条件</strong></td>
+<td>攻击者读非驻留页</td>
+<td>攻击者使用窃取的数据</td>
+</tr>
+<tr>
+<td><strong>绕过方法</strong></td>
+<td>逐页 pagemap (L3)</td>
+<td>不使用窃取数据（但使用才能获益）</td>
+</tr>
+</tbody></table>
+<h3 id="12-5-攻防进化链（扩展）"><a href="#12-5-攻防进化链（扩展）" class="headerlink" title="12.5 攻防进化链（扩展）"></a>12.5 攻防进化链（扩展）</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">L1: 直接 process_vm_readv</span><br><span class="line">    → 陷阱页检测 (min_flt)                                   ✅ 可检测</span><br><span class="line"></span><br><span class="line">L2: pagemap 预探测 + 批量读 resident 页</span><br><span class="line">    → 陷阱轮换制造竞态窗口                                    ✅ 可检测</span><br><span class="line"></span><br><span class="line">L3: 逐页 pagemap + process_vm_readv (竞态窗口 ~17μs)</span><br><span class="line">    → 内存副作用检测几乎失效，仅 PMU 级残留 (D5+101%)        ⚠️ 几乎不可检测</span><br><span class="line"></span><br><span class="line">L4: L3 + 使用窃取的数据 (渲染/外泄/计算)</span><br><span class="line">    → 应用层蜜罐 (数据溯源)                                  ✅ 可检测 ← 新增!</span><br></pre></td></tr></table></figure>
+
+<hr>
+<h2 id="13-无需-root-权限的检测方法总结"><a href="#13-无需-root-权限的检测方法总结" class="headerlink" title="13. 无需 root 权限的检测方法总结"></a>13. 无需 root 权限的检测方法总结</h2><p>用户态下（非 root）可用的检测方法及其效果：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th align="center">检测 readv</th>
+<th align="center">检测 writev</th>
+<th>绕过难度</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>PerfEvent</strong>（跨通道）</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td>中等</td>
+<td>stat vs perf 差值；自动抵消噪声；信噪比最高</td>
+</tr>
+<tr>
+<td><strong>时延检测</strong></td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td>中等</td>
+<td>纯用户态计时；无需 perf_event；无需内核配置</td>
+</tr>
+<tr>
+<td><strong>mincore</strong>（陷阱散布+轮换）</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td>中等</td>
+<td>需 pagemap 探测+避开陷阱；轮换提高难度</td>
+</tr>
+<tr>
+<td><strong>MinFlt</strong>（&#x2F;proc&#x2F;self&#x2F;stat）</td>
+<td align="center">✅（大量）</td>
+<td align="center">❌</td>
+<td>中等</td>
+<td>少量读 (&lt;7页) 信号淹没在噪声中</td>
+</tr>
+<tr>
+<td><strong>陷阱轮换</strong>（竞态窗口）</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td>困难（对批量读）</td>
+<td>逐页 pagemap 可消除竞态窗口</td>
+</tr>
+<tr>
+<td><strong>蜜罐令牌</strong>（数据溯源）</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td>极高 (L4)</td>
+<td>检测数据”使用”而非内存访问；pagemap 免疫</td>
+</tr>
+<tr>
+<td><strong>Canary</strong></td>
+<td align="center">❌</td>
+<td align="center">✅</td>
+<td>低</td>
+<td>唯一检测 writev 的用户态方法</td>
+</tr>
+<tr>
+<td><strong>GuardPage</strong></td>
+<td align="center">❌</td>
+<td align="center">✅</td>
+<td>低</td>
+<td>检测数据区篡改</td>
+</tr>
+<tr>
+<td>Referenced</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td>FOLL_REMOTE 不置 Accessed</td>
+</tr>
+<tr>
+<td>Swap</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td>不走 swap-in 路径</td>
+</tr>
+<tr>
+<td>&#x2F;proc&#x2F;self&#x2F;io</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td>rchar&#x2F;read_bytes 不变</td>
+</tr>
+<tr>
+<td>时延检测（无陷阱页）</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td>缓存一致性效应 &lt;10ns, 淹没在噪声中</td>
+</tr>
+<tr>
+<td>PMU HW 计数</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td>ARM task-context 隔离</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="14-全部检测方法对比总表"><a href="#14-全部检测方法对比总表" class="headerlink" title="14. 全部检测方法对比总表"></a>14. 全部检测方法对比总表</h2><table>
+<thead>
+<tr>
+<th>方法</th>
+<th align="center">检测读</th>
+<th align="center">检测写</th>
+<th align="center">需root</th>
+<th>绕过难度</th>
+<th align="center">本设备可用</th>
+<th>原理</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>kprobes</strong></td>
+<td align="center">✅</td>
+<td align="center">✅</td>
+<td align="center">✅</td>
+<td>不可绕过</td>
+<td align="center">✅</td>
+<td>钩内核函数 process_vm_rw_core</td>
+</tr>
+<tr>
+<td><strong>eBPF</strong></td>
+<td align="center">✅</td>
+<td align="center">✅</td>
+<td align="center">✅</td>
+<td>不可绕过</td>
+<td align="center">理论可用</td>
+<td>kprobe BPF 程序过滤</td>
+</tr>
+<tr>
+<td><strong>mincore</strong>（陷阱散布+轮换）</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>中等</td>
+<td align="center">✅</td>
+<td>MADV_DONTNEED + mincore 驻留检测</td>
+</tr>
+<tr>
+<td><strong>时延检测</strong>（陷阱页）</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>中等</td>
+<td align="center">✅</td>
+<td>纯用户态 clock_gettime 计时；无需 perf_event</td>
+</tr>
+<tr>
+<td><strong>PerfEvent</strong>（跨通道）</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>中等</td>
+<td align="center">✅</td>
+<td>&#x2F;proc&#x2F;stat vs perf_event fault 差值</td>
+</tr>
+<tr>
+<td><strong>MinFlt</strong></td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>中等</td>
+<td align="center">✅</td>
+<td>&#x2F;proc&#x2F;self&#x2F;stat min_flt 增量</td>
+</tr>
+<tr>
+<td><strong>陷阱轮换</strong>（竞态窗口）</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>困难（批量读）</td>
+<td align="center">✅</td>
+<td>缩短轮换周期→压缩安全窗口；逐页pagemap可消除</td>
+</tr>
+<tr>
+<td><strong>蜜罐令牌</strong>（数据溯源）</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>极高 (L4)</td>
+<td align="center">✅</td>
+<td>检测数据使用而非内存访问；pagemap免疫</td>
+</tr>
+<tr>
+<td><strong>Canary</strong></td>
+<td align="center">❌</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td>低</td>
+<td align="center">✅</td>
+<td>内存校验值比对</td>
+</tr>
+<tr>
+<td><strong>GuardPage</strong></td>
+<td align="center">❌</td>
+<td align="center">✅</td>
+<td align="center">❌</td>
+<td>低</td>
+<td align="center">✅</td>
+<td>PROT_NONE 守卫页</td>
+</tr>
+<tr>
+<td>Referenced</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td align="center">✅</td>
+<td>&#x2F;proc&#x2F;smaps Referenced 位</td>
+</tr>
+<tr>
+<td>Swap</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td align="center">✅</td>
+<td>VmSwap 变化</td>
+</tr>
+<tr>
+<td>CacheFlush</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td align="center">❌</td>
+<td>dc civac 被内核拦截</td>
+</tr>
+<tr>
+<td>时延检测（无陷阱页）</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td align="center">❌</td>
+<td>缓存效应 &lt;10ns vs 噪声 ~100ns, 信噪比不可用</td>
+</tr>
+<tr>
+<td>PMU HW (L1D&#x2F;L2D&#x2F;DTLB)</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td align="center">❌</td>
+<td>ARM task-context 隔离, 不计入目标 PMU</td>
+</tr>
+<tr>
+<td>PMU RAW (0x31 REMOTE_ACCESS)</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td align="center">❌</td>
+<td>受控实验无信号, 仍受 task-context 限制</td>
+</tr>
+<tr>
+<td>PMU uncore (LLCC&#x2F;system-wide)</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td align="center">❌</td>
+<td>SELinux 阻断 pid&#x3D;-1, sysfs 不可读</td>
+</tr>
+<tr>
+<td>perf_event (tracepoint)</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td align="center">✅</td>
+<td>—</td>
+<td align="center">❌</td>
+<td>raw_syscalls 不生成事件</td>
+</tr>
+<tr>
+<td>&#x2F;proc&#x2F;self&#x2F;io</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td align="center">❌</td>
+<td>—</td>
+<td align="center">—</td>
+<td>不改变目标 I&#x2F;O 计数器</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="15-最终检测能力总结"><a href="#15-最终检测能力总结" class="headerlink" title="15. 最终检测能力总结"></a>15. 最终检测能力总结</h2><table>
+<thead>
+<tr>
+<th>攻击类型</th>
+<th>用户态检测 (防御者非root)</th>
+<th align="center">攻击者权限</th>
+<th>root 检测</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>process_vm_readv</code> 直接读</td>
+<td><strong>PerfEvent跨通道</strong> + <strong>时延检测</strong> + <strong>mincore</strong></td>
+<td align="center">root</td>
+<td><strong>kprobes</strong></td>
+</tr>
+<tr>
+<td>pagemap 预探测 + 批量读 resident</td>
+<td><strong>陷阱轮换</strong> (竞态窗口)</td>
+<td align="center">root</td>
+<td><strong>kprobes</strong></td>
+</tr>
+<tr>
+<td>逐页 pagemap + readv (99.87% 规避陷阱)</td>
+<td><strong>几乎无法检测</strong> (31&#x2F;23936 误读，仅 PMU 级残留)</td>
+<td align="center">root</td>
+<td><strong>kprobes</strong></td>
+</tr>
+<tr>
+<td>L3 + 使用窃取数据 (渲染&#x2F;外泄)</td>
+<td><strong>蜜罐令牌</strong> (数据溯源)</td>
+<td align="center">root</td>
+<td><strong>kprobes</strong></td>
+</tr>
+<tr>
+<td><code>process_vm_writev</code> (写)</td>
+<td><strong>Canary</strong> + <strong>GuardPage</strong></td>
+<td align="center">root</td>
+<td><strong>kprobes</strong></td>
+</tr>
+<tr>
+<td>pagemap 侦察 (只读不写)</td>
+<td>无法检测 (无痕侧信道)</td>
+<td align="center">root</td>
+<td>无法检测</td>
+</tr>
+</tbody></table>
+<h3 id="15-1-核心结论"><a href="#15-1-核心结论" class="headerlink" title="15.1 核心结论"></a>15.1 核心结论</h3><ol>
+<li><p><strong>用户态可检测的四层攻击</strong>（攻击者均为 root）：</p>
+<ul>
+<li>L1 直接读：PerfEvent 跨通道、时延检测、mincore（防御者自检）均可检测</li>
+<li>L2 预探测+批量读：陷阱轮换制造竞态窗口</li>
+<li>L3 逐页 pagemap+readv：用户态内存副作用检测的终点——竞态窗口仅 ~3-6μs</li>
+<li>L4 L3 + 使用窃取数据：应用层蜜罐（数据溯源），将检测从内存层提升到数据使用层</li>
+</ul>
+</li>
+<li><p><strong>时延检测是 PerfEvent 的有力补充</strong>：纯用户态 <code>clock_gettime</code> 计时，无需 <code>CONFIG_PERF_EVENTS</code>，信噪比充足（~20-50x），但必须配合陷阱页使用</p>
+</li>
+<li><p><strong>ARM64 硬件 PMU 方案不可行（经严格验证）</strong>：五个探索方向全部失败。根因：ARM PMU task-context 隔离 + SELinux 阻断系统级访问</p>
+</li>
+<li><p><strong>所有 fault 类检测的进化链</strong>（攻击者始终 root，防御者非 root）：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">直接读 → pagemap预探测 → 陷阱轮换 → 逐页pagemap → syscall监控(需root)</span><br><span class="line">  ✅         ✅           ✅(竞态)    ❌(用户态)     ✅(root)</span><br><span class="line">                                         ↓</span><br><span class="line">                                  数据使用 (渲染/外泄)</span><br><span class="line">                                         ↓</span><br><span class="line">                              应用层蜜罐 ✅(数据溯源)</span><br></pre></td></tr></table></figure>
+</li>
+<li><p><strong>用户态攻防终局</strong>：攻击者采用逐页 pagemap + readv 可将内存副作用压缩至极低水平（99.87% 规避率，31&#x2F;23936 误读），但<strong>不可完美消除</strong>——残留的 D5 DTLB +101%、D6 RefLat -33% 等 PMU 级信号仍可被统计检测捕获。更重要的是，检测可以在数据使用层继续进行——将问题从”检测内存被读”转变为”检测数据被用”。</p>
+</li>
+<li><p><strong>pagemap 的能力边界</strong>：<code>/proc/&lt;pid&gt;/pagemap</code> 可以区分驻留页&#x2F;非驻留页（帮助攻击者绕过陷阱页），但不能区分合法数据&#x2F;蜜罐数据（两者都是驻留页中的字节）。这是防御方在应用层的不对称优势。</p>
+</li>
+</ol>
+<hr>
+<h2 id="附录：代码文件修改记录"><a href="#附录：代码文件修改记录" class="headerlink" title="附录：代码文件修改记录"></a>附录：代码文件修改记录</h2><table>
+<thead>
+<tr>
+<th>文件</th>
+<th>修改内容</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>attacker.c</code></td>
+<td>+<code>#include &lt;stdint.h&gt;</code>; +<code>#include &lt;fcntl.h&gt;</code>; +<code>do_probe()</code> pagemap 探测命令</td>
+</tr>
+<tr>
+<td><code>detect.h</code></td>
+<td>独立 mincore_region → trap_indices[128]&#x2F;trap_count&#x2F;round; +MinFlt 字段; +PerfEvent 跨通道字段</td>
+</tr>
+<tr>
+<td><code>detect.c</code></td>
+<td>陷阱页散布于 ref_region; 修复 detect_swap&#x2F;detect_mincore 先查后收; 陷阱轮换; +detect_minflt; +detect_perf（跨通道测序）</td>
+</tr>
+<tr>
+<td><code>detector.c</code></td>
+<td>CacheFlush 不触发自毁; 输出陷阱页数; 7→8 个检测方法</td>
+</tr>
+<tr>
+<td><code>CMakeLists.txt</code></td>
+<td>移除 <code>-llog</code> 链接</td>
+</tr>
+</tbody></table>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2026/06/04/cross-process-memory-detection/">https://brszzz.github.io/2026/06/04/cross-process-memory-detection/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Linux%E5%86%85%E6%A0%B8/">Linux内核</a><a class="post-meta__tags" href="/tags/%E6%B8%B8%E6%88%8F%E5%AE%89%E5%85%A8/">游戏安全</a><a class="post-meta__tags" href="/tags/ARM64/">ARM64</a><a class="post-meta__tags" href="/tags/Android/">Android</a><a class="post-meta__tags" href="/tags/%E8%B7%A8%E8%BF%9B%E7%A8%8B/">跨进程</a><a class="post-meta__tags" href="/tags/%E5%86%85%E5%AD%98%E6%A3%80%E6%B5%8B/">内存检测</a><a class="post-meta__tags" href="/tags/PMU/">PMU</a><a class="post-meta__tags" href="/tags/%E8%9C%9C%E7%BD%90/">蜜罐</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/06/04/honey-page-five-generations/" title="内存访问蜜罐页的五次进化——从静态陷阱到多维度 PMU 统计检测"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">内存访问蜜罐页的五次进化——从静态陷阱到多维度 PMU 统计检测</div></div><div class="info-2"><div class="info-item-1">设计并验证五代蜜罐页检测方案，从 MADV_DONTNEED 轮换 + mincore 自检到融合 ARMv8 PMU 的六维度统计检测，探索跨进程内存读取检测的完整进化路径与硬件级残留信号。</div></div></div></a><a class="pagination-related" href="/2026/06/04/vm_rw_detect_analysis/" title="ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗</div></div><div class="info-2"><div class="info-item-1">系统研究 Android ARM64 平台上跨进程内存读写的可检测性，覆盖 mincore 自检、PerfEvent 跨通道测序、PMU 硬件计数器、kprobes 内核挂钩等十余种检测方法，分析各方案的优缺点与对抗手段。</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2026/06/04/honey-page-five-generations/" title="内存访问蜜罐页的五次进化——从静态陷阱到多维度 PMU 统计检测"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">内存访问蜜罐页的五次进化——从静态陷阱到多维度 PMU 统计检测</div></div><div class="info-2"><div class="info-item-1">设计并验证五代蜜罐页检测方案，从 MADV_DONTNEED 轮换 + mincore 自检到融合 ARMv8 PMU 的六维度统计检测，探索跨进程内存读取检测的完整进化路径与硬件级残留信号。</div></div></div></a><a class="pagination-related" href="/2026/06/04/vm_rw_detect_analysis/" title="ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗</div></div><div class="info-2"><div class="info-item-1">系统研究 Android ARM64 平台上跨进程内存读写的可检测性，覆盖 mincore 自检、PerfEvent 跨通道测序、PMU 硬件计数器、kprobes 内核挂钩等十余种检测方法，分析各方案的优缺点与对抗手段。</div></div></div></a><a class="pagination-related" href="/2026/06/04/kernel_read_detect/" title="内核驱动级内存读写的用户层检测与绕过——一次攻防对抗实践"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">内核驱动级内存读写的用户层检测与绕过——一次攻防对抗实践</div></div><div class="info-2"><div class="info-item-1">在 ARM64 Android 平台上构建内核驱动内存读写检测 Demo，防御端通过 5 种用户态手段检测外部内存访问，攻击端从 access_process_vm 演进为物理内存直读，记录完整的攻防对抗过程。</div></div></div></a><a class="pagination-related" href="/2026/06/06/MMU%E6%96%AD%E7%82%B9%E7%B3%BB%E7%BB%9F%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3/" title="ARM64 页表断点——基于 PTE 缺页异常的透明拦截、上下文捕获与寄存器实时修改"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-06</div><div class="info-item-2">ARM64 页表断点——基于 PTE 缺页异常的透明拦截、上下文捕获与寄存器实时修改</div></div><div class="info-2"><div class="info-item-1">基于 ARM64 PTE 权限位操控与 do_page_fault 缺页拦截的透明断点系统，支持执行/读/写三种断点类型、32 个全局槽位、GPR+SIMD 完整上下文捕获与寄存器实时修改，One-Shot 非阻塞模式对目标进程完全不可感知，面向 Android 游戏逆向工程场景。</div></div></div></a><a class="pagination-related" href="/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/" title="ELF 二进制字符串加密的逆向"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-23</div><div class="info-item-2">ELF 二进制字符串加密的逆向</div></div><div class="info-2"><div class="info-item-1">逆向一个 Android ARM64 ELF 的自定义字符串加密方案，还原双 pass 流密码算法（含 KEY_TERM 完整性锚点机制），写 Python 脚本一次性解密全部 956 条字符串。顺带发现一个 NEON 加壳框架。</div></div></div></a><a class="pagination-related" href="/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/" title="某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-18</div><div class="info-item-2">某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程</div></div><div class="info-2"><div class="info-item-1">从一个被 Clang LTO 全 unroll 编译爆体积的 93KB UE4 函数出发，先把误判为 OLLVM 的 FName::LookupOrAdd 还原为正常逻辑，再逐 case 抓出 FName 字符串的 9 路异或解密算法（窄路径 + 宽路径），最后定位 g_FNamePool 全局变量并落到可用于内存读取的 C++ 代码。</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">35</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">132</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E8%B7%A8%E8%BF%9B%E7%A8%8B%E5%86%85%E5%AD%98%E8%AF%BB%E5%86%99%E7%9A%84%E6%94%BB%E9%98%B2%E5%8D%9A%E5%BC%88%EF%BC%9A%E4%BB%8E%E5%86%85%E6%A0%B8%E7%BC%BA%E9%A1%B5%E9%99%B7%E9%98%B1%E5%88%B0%E5%BA%94%E7%94%A8%E5%B1%82%E6%95%B0%E6%8D%AE%E6%BA%AF%E6%BA%90"><span class="toc-text">跨进程内存读写的攻防博弈：从内核缺页陷阱到应用层数据溯源</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%91%98%E8%A6%81"><span class="toc-text">摘要</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#1-%E9%A1%B9%E7%9B%AE%E6%A6%82%E8%BF%B0"><span class="toc-text">1. 项目概述</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%9D%83%E9%99%90%E6%A8%A1%E5%9E%8B"><span class="toc-text">权限模型</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#2-%E6%A3%80%E6%B5%8B%E6%96%B9%E6%B3%95%E6%80%BB%E8%A7%88"><span class="toc-text">2. 检测方法总览</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#3-mincore-pagemap-%E7%BB%95%E8%BF%87%E5%88%86%E6%9E%90"><span class="toc-text">3. mincore&#x2F;pagemap 绕过分析</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#3-1-%E5%85%B3%E9%94%AE%E5%89%8D%E6%8F%90%EF%BC%9Amincore-%E4%B8%8D%E8%83%BD%E8%B7%A8%E8%BF%9B%E7%A8%8B%E6%8E%A2%E6%B5%8B"><span class="toc-text">3.1 关键前提：mincore() 不能跨进程探测</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-2-%E5%8E%9F%E5%A7%8B%E7%BB%95%E8%BF%87%EF%BC%88%E7%8B%AC%E7%AB%8B-mincore-region%EF%BC%89"><span class="toc-text">3.2 原始绕过（独立 mincore_region）</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-3-%E4%BF%AE%E5%A4%8D1%EF%BC%9A%E9%99%B7%E9%98%B1%E9%A1%B5%E6%95%A3%E5%B8%83"><span class="toc-text">3.3 修复1：陷阱页散布</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-4-%E4%BF%AE%E5%A4%8D2%EF%BC%9A%E9%99%B7%E9%98%B1%E8%BD%AE%E6%8D%A2"><span class="toc-text">3.4 修复2：陷阱轮换</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-5-%E6%AE%8B%E7%95%99%E7%BB%95%E8%BF%87"><span class="toc-text">3.5 残留绕过</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#4-MinFlt-%E6%A3%80%E6%B5%8B"><span class="toc-text">4. MinFlt 检测</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#4-1-%E5%8E%9F%E7%90%86"><span class="toc-text">4.1 原理</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-2-%E5%AE%9E%E6%B5%8B%E5%9F%BA%E7%BA%BF"><span class="toc-text">4.2 实测基线</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-3-%E5%B1%80%E9%99%90"><span class="toc-text">4.3 局限</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#5-perf-event-tracepoint-%E5%B0%9D%E8%AF%95"><span class="toc-text">5. perf_event tracepoint 尝试</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#5-1-%E6%96%B9%E6%A1%88"><span class="toc-text">5.1 方案</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-2-%E5%AE%9E%E6%B5%8B%E7%BB%93%E6%9E%9C"><span class="toc-text">5.2 实测结果</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-3-%E7%BB%93%E8%AE%BA"><span class="toc-text">5.3 结论</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#6-kprobes-%E6%A3%80%E6%B5%8B%E6%96%B9%E6%A1%88"><span class="toc-text">6. kprobes 检测方案</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#6-1-%E5%8E%9F%E7%90%86"><span class="toc-text">6.1 原理</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-2-%E8%AE%BE%E7%BD%AE"><span class="toc-text">6.2 设置</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-3-%E5%AE%9E%E6%B5%8B%E8%BE%93%E5%87%BA"><span class="toc-text">6.3 实测输出</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-4-kprobe-vs-mincore-%E5%AF%B9%E6%AF%94"><span class="toc-text">6.4 kprobe vs mincore 对比</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#7-perf-event-%E4%BE%A7%E4%BF%A1%E9%81%93%E6%B5%8B%E5%BA%8F"><span class="toc-text">7. perf_event 侧信道测序</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#7-1-%E6%A0%B8%E5%BF%83%E5%8F%91%E7%8E%B0"><span class="toc-text">7.1 核心发现</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#7-2-%E8%B7%A8%E9%80%9A%E9%81%93%E6%A3%80%E6%B5%8B%E5%8E%9F%E7%90%86"><span class="toc-text">7.2 跨通道检测原理</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#7-3-%E5%AE%9E%E6%B5%8B%E7%BB%93%E6%9E%9C"><span class="toc-text">7.3 实测结果</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#7-4-%E5%AF%B9%E6%AF%94-MinFlt"><span class="toc-text">7.4 对比 MinFlt</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#7-5-%E7%BB%95%E8%BF%87%E5%88%86%E6%9E%90"><span class="toc-text">7.5 绕过分析</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#8-ARM64-%E7%A1%AC%E4%BB%B6-PMU-%E6%A3%80%E6%B5%8B%E6%96%B9%E6%A1%88%E7%A0%94%E7%A9%B6"><span class="toc-text">8. ARM64 硬件 PMU 检测方案研究</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#8-1-%E6%B5%8B%E8%AF%95%E7%8E%AF%E5%A2%83"><span class="toc-text">8.1 测试环境</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#8-2-%E4%BA%94%E4%B8%AA%E6%8E%A2%E7%B4%A2%E6%96%B9%E5%90%91"><span class="toc-text">8.2 五个探索方向</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E5%90%91-1%EF%BC%9A%E7%B3%BB%E7%BB%9F%E7%BA%A7%E7%9B%91%E6%8E%A7-pid-1-cpu-N"><span class="toc-text">方向 1：系统级监控 (pid&#x3D;-1, cpu&#x3D;N)</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E5%90%91-2%EF%BC%9AQualcomm-LLCC-PMU%EF%BC%88%E7%B3%BB%E7%BB%9F%E7%BA%A7-Cache-Controller%EF%BC%89"><span class="toc-text">方向 2：Qualcomm LLCC-PMU（系统级 Cache Controller）</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E5%90%91-3%EF%BC%9AARMv8-RAW-Event-%E7%BC%96%E7%A0%81%E6%8E%A2%E7%B4%A2"><span class="toc-text">方向 3：ARMv8 RAW Event 编码探索</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E5%90%91-4%EF%BC%9APERF-TYPE-HW-CACHE-%E6%B5%8B%E8%AF%95"><span class="toc-text">方向 4：PERF_TYPE_HW_CACHE 测试</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E5%90%91-5%EF%BC%9A%E6%9C%AA%E7%9F%A5-PMU-Type-8-10"><span class="toc-text">方向 5：未知 PMU Type 8 &amp; 10</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#8-3-%E4%B8%A5%E6%A0%BC%E5%8F%97%E6%8E%A7%E5%AE%9E%E9%AA%8C%EF%BC%9A%E8%B7%A8%E8%BF%9B%E7%A8%8B%E6%94%BB%E5%87%BB-PMU-%E4%BF%A1%E5%8F%B7"><span class="toc-text">8.3 严格受控实验：跨进程攻击 PMU 信号</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#8-4-%E6%A0%B9%E5%9B%A0%E5%88%86%E6%9E%90"><span class="toc-text">8.4 根因分析</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#8-5-PMU-%E7%A0%94%E7%A9%B6%E6%9C%80%E7%BB%88%E7%BB%93%E8%AE%BA"><span class="toc-text">8.5 PMU 研究最终结论</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#9-%E5%86%85%E5%AD%98%E8%AE%BF%E9%97%AE%E6%97%B6%E5%BB%B6%E6%A3%80%E6%B5%8B"><span class="toc-text">9. 内存访问时延检测</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#9-1-%E5%8E%9F%E7%90%86"><span class="toc-text">9.1 原理</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#9-2-%E6%A0%A1%E5%87%86%E6%95%B0%E6%8D%AE"><span class="toc-text">9.2 校准数据</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#9-3-%E6%A3%80%E6%B5%8B%E6%B5%81%E7%A8%8B"><span class="toc-text">9.3 检测流程</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#9-4-%E5%AE%9E%E6%B5%8B%E7%BB%93%E6%9E%9C"><span class="toc-text">9.4 实测结果</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#9-5-%E4%BC%98%E5%8A%BF%E4%B8%8E%E5%B1%80%E9%99%90"><span class="toc-text">9.5 优势与局限</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#10-%E9%99%B7%E9%98%B1%E8%BD%AE%E6%8D%A2-vs-pagemap-%E9%A2%84%E6%8E%A2%E6%B5%8B%E2%80%94%E2%80%94%E7%AB%9E%E6%80%81%E7%AA%97%E5%8F%A3%E6%B5%8B%E8%AF%95"><span class="toc-text">10. 陷阱轮换 vs pagemap 预探测——竞态窗口测试</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#10-1-%E6%9E%B6%E6%9E%84%E8%AF%B4%E6%98%8E"><span class="toc-text">10.1 架构说明</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#10-2-%E6%B5%8B%E8%AF%95%E8%AE%BE%E8%AE%A1"><span class="toc-text">10.2 测试设计</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#10-3-%E5%AE%9E%E6%B5%8B%E7%BB%93%E6%9E%9C%EF%BC%88%E7%8B%AC%E7%AB%8B%E8%BF%9B%E7%A8%8B%EF%BC%89"><span class="toc-text">10.3 实测结果（独立进程）</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#11-%E9%80%90%E9%A1%B5-pagemap%E2%80%94%E2%80%94%E7%94%A8%E6%88%B7%E6%80%81%E6%94%BB%E9%98%B2%E7%9A%84%E7%BB%88%E7%82%B9"><span class="toc-text">11. 逐页 pagemap——用户态攻防的终点</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#11-1-%E6%94%BB%E5%87%BB%E5%8D%87%E7%BA%A7"><span class="toc-text">11.1 攻击升级</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#11-2-%E5%AE%9E%E6%B5%8B%E6%95%B0%E6%8D%AE"><span class="toc-text">11.2 实测数据</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#11-3-%E7%AB%9E%E6%80%81%E7%AA%97%E5%8F%A3%E8%AE%A1%E7%AE%97"><span class="toc-text">11.3 竞态窗口计算</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#11-4-%E4%BB%A3%E4%BB%B7%E5%AF%B9%E6%AF%94"><span class="toc-text">11.4 代价对比</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#11-5-%E6%9E%81%E9%99%90%E7%AB%9E%E6%80%81%E6%B5%8B%E8%AF%95"><span class="toc-text">11.5 极限竞态测试</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#11-6-pagemap-%E4%B8%BA%E4%BB%80%E4%B9%88%E4%B8%8D%E5%8F%AF%E6%A3%80%E6%B5%8B"><span class="toc-text">11.6 pagemap 为什么不可检测</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#11-7-%E6%94%BB%E9%98%B2%E5%8D%87%E7%BA%A7%E9%93%BE"><span class="toc-text">11.7 攻防升级链</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#11-8-%E7%94%A8%E6%88%B7%E6%80%81%E6%94%BB%E9%98%B2%E7%BB%88%E6%AD%A2%E7%BA%BF"><span class="toc-text">11.8 用户态攻防终止线</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#12-%E5%BA%94%E7%94%A8%E5%B1%82%E8%9C%9C%E7%BD%90%E2%80%94%E2%80%94%E6%95%B0%E6%8D%AE%E6%BA%AF%E6%BA%90%E6%A3%80%E6%B5%8B"><span class="toc-text">12. 应用层蜜罐——数据溯源检测</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#12-1-%E6%A0%B8%E5%BF%83%E6%B4%9E%E5%AF%9F"><span class="toc-text">12.1 核心洞察</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#12-2-%E8%9C%9C%E7%BD%90%E4%BB%A4%E7%89%8C%E7%BB%93%E6%9E%84"><span class="toc-text">12.2 蜜罐令牌结构</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#12-3-%E4%B8%89%E7%A7%8D%E8%9C%9C%E7%BD%90%E6%A8%A1%E5%BC%8F%E5%8F%8A%E5%AE%9E%E6%B5%8B"><span class="toc-text">12.3 三种蜜罐模式及实测</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#MODE-1%EF%BC%9A%E9%9D%99%E6%80%81%E4%BB%A4%E7%89%8C%E5%B5%8C%E5%85%A5%EF%BC%88%E6%95%B0%E6%8D%AE%E6%BA%AF%E6%BA%90%EF%BC%89"><span class="toc-text">MODE 1：静态令牌嵌入（数据溯源）</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#MODE-2%EF%BC%9ALiveness-Check%EF%BC%88%E4%BB%A4%E7%89%8C%E9%80%83%E9%80%B8%E6%A3%80%E6%B5%8B%EF%BC%89"><span class="toc-text">MODE 2：Liveness Check（令牌逃逸检测）</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#MODE-3%EF%BC%9A%E8%87%AA%E5%8F%8D%E5%99%AC%E9%99%B7%E9%98%B1%E5%80%BC%EF%BC%88%E4%BD%BF%E7%94%A8%E5%8D%B3%E8%A7%A6%E5%8F%91%EF%BC%89"><span class="toc-text">MODE 3：自反噬陷阱值（使用即触发）</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#12-4-%E8%9C%9C%E7%BD%90-vs-%E9%99%B7%E9%98%B1%E9%A1%B5%E5%AF%B9%E6%AF%94"><span class="toc-text">12.4 蜜罐 vs 陷阱页对比</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#12-5-%E6%94%BB%E9%98%B2%E8%BF%9B%E5%8C%96%E9%93%BE%EF%BC%88%E6%89%A9%E5%B1%95%EF%BC%89"><span class="toc-text">12.5 攻防进化链（扩展）</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#13-%E6%97%A0%E9%9C%80-root-%E6%9D%83%E9%99%90%E7%9A%84%E6%A3%80%E6%B5%8B%E6%96%B9%E6%B3%95%E6%80%BB%E7%BB%93"><span class="toc-text">13. 无需 root 权限的检测方法总结</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#14-%E5%85%A8%E9%83%A8%E6%A3%80%E6%B5%8B%E6%96%B9%E6%B3%95%E5%AF%B9%E6%AF%94%E6%80%BB%E8%A1%A8"><span class="toc-text">14. 全部检测方法对比总表</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#15-%E6%9C%80%E7%BB%88%E6%A3%80%E6%B5%8B%E8%83%BD%E5%8A%9B%E6%80%BB%E7%BB%93"><span class="toc-text">15. 最终检测能力总结</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#15-1-%E6%A0%B8%E5%BF%83%E7%BB%93%E8%AE%BA"><span class="toc-text">15.1 核心结论</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%99%84%E5%BD%95%EF%BC%9A%E4%BB%A3%E7%A0%81%E6%96%87%E4%BB%B6%E4%BF%AE%E6%94%B9%E8%AE%B0%E5%BD%95"><span class="toc-text">附录：代码文件修改记录</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/%E4%B8%80%E5%8F%AAARM64%E5%A3%B3%E7%9A%84%E4%B8%A4%E6%AC%A1Unicorn%E6%95%91%E5%9C%BA%E2%80%94%E2%80%94%E4%BB%8E%E5%8E%8B%E7%BC%A9%E5%A4%96%E5%A3%B3%E5%88%B0NEON-XOR%E5%AD%97%E7%AC%A6%E4%B8%B2/" title="一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串">一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串</a><time datetime="2026-06-23T12:16:00.000Z" title="发表于 2026-06-23 20:16:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/" title="记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</a><time datetime="2026-06-23T12:04:00.000Z" title="发表于 2026-06-23 20:04:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/" title="ELF 二进制字符串加密的逆向">ELF 二进制字符串加密的逆向</a><time datetime="2026-06-23T11:59:00.000Z" title="发表于 2026-06-23 19:59:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="领域特定虚拟机DSVM指令完整还原">领域特定虚拟机DSVM指令完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/" title="某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程">某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程</a><time datetime="2026-06-17T16:00:00.000Z" title="发表于 2026-06-18 00:00:00">2026-06-18</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('a.site-page[href="/video-player/"]').forEach(function(a){a.setAttribute('target','_blank');a.setAttribute('rel','noopener')})})</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

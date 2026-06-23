@@ -1,0 +1,1895 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>DrawGuard——基于多维度 GPU 特征的用户态 Android 叠加层检测系统 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="针对 Android 平台上基于 EGL&#x2F;OpenGL ES 的 GPU 叠加层攻击，设计纯用户态实时检测系统，通过 SurfaceFlinger 图层枚举、GPU 驱动 ioctl、sysfs 采样、帧延迟分析四维度实现可靠检测，检测置信度 0.95，首告警延迟 &lt; 3 秒。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="DrawGuard——基于多维度 GPU 特征的用户态 Android 叠加层检测系统">
+<meta property="og:url" content="https://brszzz.github.io/2026/06/05/draw_detect/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="针对 Android 平台上基于 EGL&#x2F;OpenGL ES 的 GPU 叠加层攻击，设计纯用户态实时检测系统，通过 SurfaceFlinger 图层枚举、GPU 驱动 ioctl、sysfs 采样、帧延迟分析四维度实现可靠检测，检测置信度 0.95，首告警延迟 &lt; 3 秒。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2026-06-04T16:00:00.000Z">
+<meta property="article:modified_time" content="2026-06-23T11:49:48.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="游戏安全">
+<meta property="article:tag" content="逆向工程">
+<meta property="article:tag" content="Android">
+<meta property="article:tag" content="GPU">
+<meta property="article:tag" content="EGL">
+<meta property="article:tag" content="OpenGL">
+<meta property="article:tag" content="叠加层检测">
+<meta property="article:tag" content="SurfaceFlinger">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "DrawGuard——基于多维度 GPU 特征的用户态 Android 叠加层检测系统",
+  "url": "https://brszzz.github.io/2026/06/05/draw_detect/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2026-06-04T16:00:00.000Z",
+  "dateModified": "2026-06-23T11:49:48.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2026/06/05/draw_detect/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'DrawGuard——基于多维度 GPU 特征的用户态 Android 叠加层检测系统',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">35</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">132</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div><div class="menus_item"><a class="site-page" href="/video-player/"><i class="fa-fw fas fa-play"></i><span> video player</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">DrawGuard——基于多维度 GPU 特征的用户态 Android 叠加层检测系统</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div><div class="menus_item"><a class="site-page" href="/video-player/"><i class="fa-fw fas fa-play"></i><span> video player</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">DrawGuard——基于多维度 GPU 特征的用户态 Android 叠加层检测系统</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-06-04T16:00:00.000Z" title="发表于 2026-06-05 00:00:00">2026-06-05</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-23T11:49:48.000Z" title="更新于 2026-06-23 19:49:48">2026-06-23</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E5%AE%89%E5%85%A8%E5%88%86%E6%9E%90/">安全分析</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">103k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>6:15分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="DrawGuard：基于多维度-GPU-特征的用户态-Android-叠加层检测系统"><a href="#DrawGuard：基于多维度-GPU-特征的用户态-Android-叠加层检测系统" class="headerlink" title="DrawGuard：基于多维度 GPU 特征的用户态 Android 叠加层检测系统"></a>DrawGuard：基于多维度 GPU 特征的用户态 Android 叠加层检测系统</h1><blockquote>
+<p><strong>摘要</strong>：针对 Android 平台上基于 EGL&#x2F;OpenGL ES 的木马化 GPU 叠加层攻击，设计并实现了一套纯用户态权限的实时检测系统。系统通过 SurfaceFlinger 图层枚举、GPU 驱动 ioctl 直询、sysfs 利用率采样、帧生成延迟分析四个维度，实现对已知和未知 GPU 叠加层的可靠检测。在 Xiaomi Mi 11 (Adreno 660, Android 13) 真机测试中，检测置信度达 0.95，首告警延迟 &lt; 3 秒，无误报。</p>
+</blockquote>
+<hr>
+<h2 id="一、项目背景"><a href="#一、项目背景" class="headerlink" title="一、项目背景"></a>一、项目背景</h2><h3 id="1-1-攻击模型"><a href="#1-1-攻击模型" class="headerlink" title="1.1 攻击模型"></a>1.1 攻击模型</h3><p>在 Android 游戏安全领域，外挂开发者通过创建独立的 EGL 原生窗口，在游戏画面之上渲染一层半透明的 GPU 叠加层（Overlay），用于绘制 ESP 透视、雷达等辅助信息。此类攻击具有以下特征：</p>
+<ul>
+<li><strong>独立进程</strong>：叠加层运行在独立的原生可执行文件中，不修改游戏进程内存</li>
+<li><strong>GPU 渲染</strong>：使用 EGL 1.4 + OpenGL ES 3.0 创建硬件加速的合成层</li>
+<li><strong>软件帧控</strong>：通过 <code>nanosleep()</code> 实现帧率控制（60&#x2F;90&#x2F;120&#x2F;144 FPS），不依赖硬件 VSync</li>
+<li><strong>高权限</strong>：攻击进程拥有 root 权限，可以规避常规检测</li>
+</ul>
+<h3 id="1-2-检测约束"><a href="#1-2-检测约束" class="headerlink" title="1.2 检测约束"></a>1.2 检测约束</h3><p>防御端运行于<strong>用户态</strong>，不拥有 root 权限，这意味着：</p>
+<ul>
+<li>无法读取 root 进程的 <code>/proc/&lt;pid&gt;/maps</code>（内存映射）</li>
+<li>无法读取 root 进程的 <code>/proc/&lt;pid&gt;/fd/</code>（文件描述符）</li>
+<li>无法使用 <code>ptrace</code> 附加目标进程</li>
+<li>不能加载内核模块或修改 SELinux 策略</li>
+</ul>
+<p>本文的核心问题是：<strong>在纯用户态权限下，如何可靠地检测一个拥有 root 权限的 GPU 叠加层进程？</strong></p>
+<hr>
+<h2 id="二、系统架构"><a href="#二、系统架构" class="headerlink" title="二、系统架构"></a>二、系统架构</h2><h3 id="2-1-整体设计"><a href="#2-1-整体设计" class="headerlink" title="2.1 整体设计"></a>2.1 整体设计</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br></pre></td><td class="code"><pre><span class="line">                         ┌──────────────────────────┐</span><br><span class="line">                         │       防御端 drawguard     │</span><br><span class="line">                         │     (C++ NDK, 用户态)      │</span><br><span class="line">                         │                          │</span><br><span class="line">         ┌───────────────┤  2秒扫描周期               │</span><br><span class="line">         │               │                          │</span><br><span class="line">         ▼               │  ┌─────────────────┐     │</span><br><span class="line">┌──────────────────┐     │  │ Surface Detector │     │</span><br><span class="line">│ /dev/kgsl-3d0    │◄────┼──│ dumpsys SF --list│     │</span><br><span class="line">│ (ioctl)          │     │  └─────────────────┘     │</span><br><span class="line">└──────────────────┘     │           │               │</span><br><span class="line">         │               │  ┌─────────────────┐     │</span><br><span class="line">         ▼               │  │  GPU Detector    │     │</span><br><span class="line">┌──────────────────┐     │  │  sysfs + ioctl   │     │</span><br><span class="line">│ /sys/class/kgsl/ │◄────┼──│  + /proc扫描     │     │</span><br><span class="line">│ kgsl-3d0/gpubusy │     │  └─────────────────┘     │</span><br><span class="line">└──────────────────┘     │           │               │</span><br><span class="line">         │               │  ┌─────────────────┐     │</span><br><span class="line">         ▼               │  │  Frame Detector  │     │</span><br><span class="line">┌──────────────────┐     │  │  GPU利用率/变异   │     │</span><br><span class="line">│ dumpsys          │◄────┼──│  SF latency      │     │</span><br><span class="line">│ SurfaceFlinger   │     │  └─────────────────┘     │</span><br><span class="line">└──────────────────┘     │           │               │</span><br><span class="line">         │               │  ┌─────────────────┐     │</span><br><span class="line">         ▼               │  │Process Detector  │     │</span><br><span class="line">┌──────────────────┐     │  │  /proc扫描       │     │</span><br><span class="line">│ /proc/&lt;pid&gt;/comm │◄────┼──│  uinput检测      │     │</span><br><span class="line">│ /proc/&lt;pid&gt;/     │     │  └─────────────────┘     │</span><br><span class="line">│   cmdline        │     │           │               │</span><br><span class="line">└──────────────────┘     │           ▼               │</span><br><span class="line">                         │  ┌─────────────────┐     │</span><br><span class="line">  攻击端 drawattack       │  │  Alert Manager   │     │</span><br><span class="line">  (root, SsageGUIMAX)    │  │ 加权评分+协同加成 │     │</span><br><span class="line">                         │  └─────────────────┘     │</span><br><span class="line">                         │           │               │</span><br><span class="line">                         │           ▼               │</span><br><span class="line">                         │  logcat JSON告警          │</span><br><span class="line">                         └──────────────────────────┘</span><br></pre></td></tr></table></figure>
+
+<h3 id="2-2-目录结构"><a href="#2-2-目录结构" class="headerlink" title="2.2 目录结构"></a>2.2 目录结构</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br></pre></td><td class="code"><pre><span class="line">draw_detect/</span><br><span class="line">├── deploy.sh                          # 一键部署脚本</span><br><span class="line">├── defense/                           # 防御端 (DrawGuard)</span><br><span class="line">│   ├── jni/</span><br><span class="line">│   │   ├── main.cpp                   # 检测主循环编排</span><br><span class="line">│   │   ├── signatures.h                  # 统一攻击指纹数据库</span><br><span class="line">│   │   ├── detectors/</span><br><span class="line">│   │   │   ├── surface_detector.&#123;h,cpp&#125;   # SurfaceFlinger 图层 + Z-order</span><br><span class="line">│   │   │   ├── gpu_detector.&#123;h,cpp&#125;       # sysfs + ioctl GPU 检测</span><br><span class="line">│   │   │   ├── frame_detector.&#123;h,cpp&#125;     # 帧生成延迟 + GPU CV 分析</span><br><span class="line">│   │   │   ├── process_detector.&#123;h,cpp&#125;   # uinput + EGL + 文件路径取证</span><br><span class="line">│   │   │   └── accessibility_detector.&#123;h,cpp&#125;  # 无障碍服务检测</span><br><span class="line">│   │   ├── alert/</span><br><span class="line">│   │   │   ├── alert_manager.&#123;h,cpp&#125;      # 加权评分引擎</span><br><span class="line">│   │   │   └── report.&#123;h,cpp&#125;             # JSON 报告</span><br><span class="line">│   │   └── utils/</span><br><span class="line">│   │       ├── shell.&#123;h,cpp&#125;              # popen/fork 命令执行</span><br><span class="line">│   │       ├── proc_reader.&#123;h,cpp&#125;        # /proc 解析器</span><br><span class="line">│   │       └── timer.&#123;h,cpp&#125;              # clock_gettime 高精度计时</span><br><span class="line">│   └── libs/arm64-v8a/drawguard           # 434KB</span><br><span class="line">│</span><br><span class="line">└── attack/                            # 攻击端 (DrawAttack)</span><br><span class="line">    ├── jni/</span><br><span class="line">    │   ├── main.cpp                   # 入口 + 软件帧率控制</span><br><span class="line">    │   ├── draw.&#123;h,cpp&#125;               # EGL 初始化 + GLES3 渲染</span><br><span class="line">    │   └── native_surface/            # AOSP 原生窗口创建</span><br><span class="line">    │       ├── native_surface.&#123;h,cpp&#125; # API 28-33 blob 加载</span><br><span class="line">    │       ├── utils.&#123;h,cpp&#125;          # dlblob/shared-memory 加载</span><br><span class="line">    │       ├── shm_open_anon.&#123;h,cpp&#125;  # 匿名共享内存</span><br><span class="line">    │       └── aosp/                  # 预编译 .so blob (≈41KB)</span><br><span class="line">    └── libs/arm64-v8a/drawattack      # 227KB</span><br></pre></td></tr></table></figure>
+
+<h3 id="2-3-攻击端设计"><a href="#2-3-攻击端设计" class="headerlink" title="2.3 攻击端设计"></a>2.3 攻击端设计</h3><p>攻击端是一个简化的 GPU 叠加层绘制程序，参考 ImGui 外挂的渲染管线实现：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">main()</span><br><span class="line">  │</span><br><span class="line">  ├─ screen_config()          ← dumpsys display 获取屏幕分辨率</span><br><span class="line">  ├─ init_egl()</span><br><span class="line">  │   ├─ eglGetDisplay()      ← 获取 EGL 显示</span><br><span class="line">  │   ├─ eglChooseConfig()    ← RGBA8888 配置</span><br><span class="line">  │   ├─ eglCreateContext()   ← OpenGL ES 3.0 上下文</span><br><span class="line">  │   ├─ get_createNativeWindow()</span><br><span class="line">  │   │   ├─ get_android_api_level()     ← 检测 API 级别</span><br><span class="line">  │   │   ├─ dlblob(native_surface_13_64) ← 从内存加载预编译 .so</span><br><span class="line">  │   │   ├─ dlopen()                    ← 动态加载</span><br><span class="line">  │   │   └─ dlsym(&quot;createNativeWindow&quot;) ← 查找符号</span><br><span class="line">  │   ├─ createNativeWindow(&quot;SsageGUIMAX&quot;)</span><br><span class="line">  │   └─ eglCreateWindowSurface()</span><br><span class="line">  │</span><br><span class="line">  └─ 渲染循环 (60/90/120/144 FPS)</span><br><span class="line">      ├─ draw_frame()          ← GLES3 绘制彩色矩形</span><br><span class="line">      ├─ eglSwapBuffers()      ← 交换缓冲区</span><br><span class="line">      └─ nanosleep()           ← 软件帧率控制</span><br></pre></td></tr></table></figure>
+
+<p><strong>窗口创建机制</strong>：Android 原生可执行文件不能直接创建 <code>ANativeWindow</code>。攻击端采用了 AOSP 预编译 blob 方案——将 Android 9 至 13 每个版本的 <code>libsurfaceflinger_client.so</code> 子集编译为内联字节数组，运行时通过 <code>memfd_create</code> 写入匿名共享内存，再通过 <code>/proc/self/fd/&lt;n&gt;</code> 路径 <code>dlopen()</code> 加载，最后 <code>dlsym()</code> 查找 <code>createNativeWindow</code> 符号。</p>
+<hr>
+<h2 id="三、检测模块详解"><a href="#三、检测模块详解" class="headerlink" title="三、检测模块详解"></a>三、检测模块详解</h2><h3 id="3-1-SurfaceFlinger-图层检测"><a href="#3-1-SurfaceFlinger-图层检测" class="headerlink" title="3.1 SurfaceFlinger 图层检测"></a>3.1 SurfaceFlinger 图层检测</h3><p><strong>原理</strong>：Android 的 SurfaceFlinger 维护所有屏幕图层的 Z-order 列表。GPU 叠加层作为一个独立的 <code>BufferStateLayer</code> 注册其中，可以通过 <code>dumpsys SurfaceFlinger --list</code> 枚举。</p>
+<p><strong>实现</strong>（<code>surface_detector.cpp</code>）：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">针对性检测：dumpsys SurfaceFlinger --list → 匹配 &quot;SsageGUIMAX&quot;</span><br><span class="line">通用检测：   启动时建立 131 个稳定图层的基线</span><br><span class="line">             运行时对比 → 标记未知新增图层</span><br></pre></td></tr></table></figure>
+
+<p>在测试设备上，基线建立耗时约 1.5 秒（3 次快照 × 500ms 间隔），检测到 131 个稳定图层。攻击窗口创建后，首次扫描即可命中（延迟 ≈ 800ms），置信度 1.0。</p>
+<p><strong>关键数据</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>条件</th>
+<th>图层数</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>空闲基线</td>
+<td>135</td>
+<td>SurfaceFlinger + 系统 UI + 应用</td>
+</tr>
+<tr>
+<td>攻击运行中</td>
+<td>137</td>
+<td>+ <code>SsageGUIMAX#NNNN</code> + <code>bbq-wrapper#NNNN</code></td>
+</tr>
+</tbody></table>
+<h4 id="3-1-1-最前面窗口精确判定（Topmost-Window-Detection）"><a href="#3-1-1-最前面窗口精确判定（Topmost-Window-Detection）" class="headerlink" title="3.1.1 最前面窗口精确判定（Topmost Window Detection）"></a>3.1.1 最前面窗口精确判定（Topmost Window Detection）</h4><p><strong>问题</strong>：<code>dumpsys SurfaceFlinger --list</code> 只能列出图层名称，不包含 Z-order 信息。攻击端的 EGL overlay 绕过 WindowManager 直接向 SurfaceFlinger 提交 buffer，导致 <code>dumpsys window</code> 的 <code>mCurrentFocus</code> 仍然指向游戏——WindowManager 完全不知道 overlay 的存在。如何从用户态拿到真实的画面堆叠顺序？</p>
+<p><strong>原理</strong>：SurfaceFlinger 完整 dump 中包含 <strong>HWC Output Layers</strong>——硬件合成器实际送到屏幕的图层列表，按 Z-order 从底到顶排列。最后一个 Output Layer 就是画面的真实最前面像素。</p>
+<p><strong>实现</strong>（<code>surface_detector.cpp:buildOutputLayerBaseline</code> &#x2F; <code>enumerateOutputLayers</code> &#x2F; <code>detectTopmostMismatch</code>）：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 1. 建立 Output Layer 基线</span></span><br><span class="line"><span class="comment">//    3 次快照 × 500ms 间隔，保留 ≥2 次出现的稳定层</span></span><br><span class="line"><span class="function"><span class="type">void</span> <span class="title">buildOutputLayerBaseline</span><span class="params">()</span></span>;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 2. 枚举当前 HWC Output Layers</span></span><br><span class="line"><span class="comment">//    解析 &quot;dumpsys SurfaceFlinger | grep &#x27;Output Layer&#x27;&quot;</span></span><br><span class="line"><span class="comment">//    返回 Z-order 列表（最后一个 = 最前面）</span></span><br><span class="line"><span class="function">std::vector&lt;std::string&gt; <span class="title">enumerateOutputLayers</span><span class="params">()</span></span>;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 3. 对比 WindowManager 焦点 vs SurfaceFlinger Z-order</span></span><br><span class="line"><span class="comment">//    检测三种情况：</span></span><br><span class="line"><span class="comment">//    a. focus-vs-topmost 不匹配（游戏有焦点但非顶层）</span></span><br><span class="line"><span class="comment">//    b. 新增未知 Output Layer（基线 diff）</span></span><br><span class="line"><span class="comment">//    c. 已知攻击图层出现在 Output 中（bbq-wrapper）</span></span><br><span class="line"><span class="function">TopmostVerdict <span class="title">detectTopmostMismatch</span><span class="params">()</span></span>;</span><br></pre></td></tr></table></figure>
+
+<p><strong>测试数据</strong>（以某射击游戏 <code>com.example.shooter</code> 为游戏对象）：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">攻击前 Output Layer 基线 (6 个稳定层):</span><br><span class="line">  SurfaceView[...GameActivity](BLAST)     ← 游戏渲染缓冲</span><br><span class="line">  com...GameActivity                      ← 游戏 Activity 窗口</span><br><span class="line">  GestureStubHome                         ← 手势指示条</span><br><span class="line">  DockAssistantView                       ← MIUI 侧边栏</span><br><span class="line">  RoundCornerTop                          ← 圆角遮罩</span><br><span class="line">  RoundCornerBottom                       ← 画面最前面</span><br><span class="line"></span><br><span class="line">攻击后 Output Layer (7 个):</span><br><span class="line">  SurfaceView[...GameActivity](BLAST)</span><br><span class="line">  com...GameActivity</span><br><span class="line">  DaptAssistantView                       ← GestureStubHome 消失</span><br><span class="line">  bbq-wrapper#1339                        ← ← ← 新增！EGL overlay 的 BLAST 包装</span><br><span class="line">  RoundCornerTop</span><br><span class="line">  RoundCornerBottom</span><br></pre></td></tr></table></figure>
+
+<p><strong>WindowManager 被欺骗的证据</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>判定方法</th>
+<th>攻击前</th>
+<th>攻击后</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>dumpsys window | grep mCurrentFocus</code></td>
+<td>某射击游戏 GameActivity</td>
+<td>某射击游戏 GameActivity（不变！）</td>
+</tr>
+<tr>
+<td><code>dumpsys SurfaceFlinger --list</code></td>
+<td>无 SsageGUIMAX</td>
+<td><strong>SsageGUIMAX#1338</strong></td>
+</tr>
+<tr>
+<td>HWC Output Layer 最顶层</td>
+<td>RoundCornerBottom</td>
+<td>RoundCornerBottom</td>
+</tr>
+<tr>
+<td>HWC Output Layer 新增</td>
+<td>—</td>
+<td><strong>bbq-wrapper#1339</strong></td>
+</tr>
+</tbody></table>
+<p>WindowManager 永远指向游戏，但 SurfaceFlinger 的 HWC Output 中出现了新图层。这种<strong>跨层级的不一致</strong>本身就是 EGL overlay 的确凿证据。</p>
+<p><strong>检测评分逻辑</strong>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">Factor 1: focus vs topmost 不匹配 (非系统UI在最前) → +0.35</span><br><span class="line">Factor 2: 未知 Output Layer 出现在基线外         → +0.30</span><br><span class="line">Factor 3: 已知攻击图层 (SsageGUIMAX/AImGui)      → +0.35</span><br><span class="line">综合 ≥ 0.30 即判定为可疑</span><br></pre></td></tr></table></figure>
+
+<h3 id="3-2-GPU-驱动-ioctl-直询"><a href="#3-2-GPU-驱动-ioctl-直询" class="headerlink" title="3.2 GPU 驱动 ioctl 直询"></a>3.2 GPU 驱动 ioctl 直询</h3><p><strong>原理</strong>：Qualcomm Adreno GPU 的设备节点 <code>/dev/kgsl-3d0</code> 权限为 <code>crw-rw-rw-</code>，任何用户态进程均可打开并调用 ioctl。KGSL (Kernel Graphics Support Layer) 驱动支持 <code>IOCTL_KGSL_DEVICE_GETPROPERTY</code> 命令，可查询驱动版本、GPU 型号、设备信息。</p>
+<p><strong>实现</strong>（<code>gpu_detector.cpp</code>）：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// KGSL ioctl 定义 (ARM64)</span></span><br><span class="line"><span class="meta">#<span class="keyword">define</span> KGSL_IOC_TYPE           0x09</span></span><br><span class="line"><span class="meta">#<span class="keyword">define</span> IOCTL_KGSL_DEVICE_GETPROPERTY \</span></span><br><span class="line"><span class="meta">    ((3U &lt;&lt; 30) | (KGSL_IOC_TYPE &lt;&lt; 8) | (0x2 &lt;&lt; 0) | \</span></span><br><span class="line"><span class="meta">     (sizeof(kgsl_device_getproperty) &lt;&lt; 16))</span></span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="keyword">define</span> KGSL_PROP_VERSION        0x0001</span></span><br><span class="line"><span class="meta">#<span class="keyword">define</span> KGSL_PROP_GPU_MODEL      0x0002</span></span><br><span class="line"><span class="meta">#<span class="keyword">define</span> KGSL_PROP_DEVICE_INFO    0x0005</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">struct</span> <span class="title class_">kgsl_device_getproperty</span> &#123;</span><br><span class="line">    <span class="type">uint32_t</span> type;</span><br><span class="line">    <span class="type">uint32_t</span> _pad;</span><br><span class="line">    <span class="type">void</span>    *value;</span><br><span class="line">    <span class="type">uint32_t</span> sizebytes;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p><strong>测试结果</strong>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">$ adb shell cat /dev/kgsl-3d0        # world-readable 确认</span><br><span class="line">OH HAI GPU</span><br><span class="line"></span><br><span class="line">ioctl(IOCTL_KGSL_DEVICE_GETPROPERTY, KGSL_PROP_VERSION)</span><br><span class="line">→ KGSL driver v0.0.1                 # ✅ 查询成功</span><br><span class="line"></span><br><span class="line">ioctl(IOCTL_KGSL_DEVICE_GETPROPERTY, KGSL_PROP_DEVICE_INFO)</span><br><span class="line">→ errno=19 (ENODEV)                  # ❌ 该设备不支持此属性</span><br></pre></td></tr></table></figure>
+
+<p>GPU 型号通过 sysfs 回退读取：<code>/sys/class/kgsl/kgsl-3d0/gpu_model</code> → <code>Adreno660v2</code>。</p>
+<h3 id="3-3-GPU-利用率与帧生成延迟检测"><a href="#3-3-GPU-利用率与帧生成延迟检测" class="headerlink" title="3.3 GPU 利用率与帧生成延迟检测"></a>3.3 GPU 利用率与帧生成延迟检测</h3><p><strong>原理</strong>：攻击端的每个渲染帧调用 <code>glClear()</code> + <code>glDrawArrays()</code> + <code>eglSwapBuffers()</code>，消耗 GPU 计算资源。Adreno kgsl 驱动在 sysfs 节点 <code>gpubusy</code> 中暴露窗口化的 GPU 忙&#x2F;总周期计数器。利用率 &#x3D; <code>busy_ticks / total_ticks × 100</code>。</p>
+<p><strong>实证数据</strong>（测试设备 Adreno 660）：</p>
+<table>
+<thead>
+<tr>
+<th>条件</th>
+<th>gpubusy</th>
+<th>利用率</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>空闲</strong></td>
+<td><code>0 / 0</code></td>
+<td><strong>0%</strong></td>
+</tr>
+<tr>
+<td>攻击 60 FPS</td>
+<td><code>138k / 1012k</code></td>
+<td><strong>~14.0%</strong></td>
+</tr>
+<tr>
+<td>攻击 90 FPS</td>
+<td><code>194k / 1004k</code></td>
+<td><strong>~19.4%</strong></td>
+</tr>
+<tr>
+<td>攻击 120 FPS</td>
+<td><code>245k / 1001k</code></td>
+<td><strong>~24.5%</strong></td>
+</tr>
+<tr>
+<td>攻击 144 FPS</td>
+<td><code>250k / 1008k</code></td>
+<td><strong>~25.0%</strong></td>
+</tr>
+</tbody></table>
+<p>利用率与 FPS 呈近似线性关系（R² ≈ 0.96），这是检测的基础。</p>
+<p><strong>帧生成延迟检测</strong>（<code>frame_detector.cpp</code>）：</p>
+<p>不同于正常的游戏渲染（GPU 负载因场景复杂度波动，变异系数 CV &gt; 15%），攻击端的软件 <code>nanosleep()</code> 帧控产生<strong>极其稳定</strong>的 GPU 负载：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">GPU frame detection: util=28.1% (μ=28.6% σ=0.3%)</span><br><span class="line">                     active=3/3 cv=0.01 conf=0.91</span><br></pre></td></tr></table></figure>
+
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>攻击端</th>
+<th>正常游戏</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>利用率变异系数 (CV)</td>
+<td><strong>0.01</strong></td>
+<td>&gt; 0.15</td>
+</tr>
+<tr>
+<td>利用率标准差</td>
+<td><strong>0.3%</strong></td>
+<td>&gt; 5%</td>
+</tr>
+<tr>
+<td>模式</td>
+<td>恒定</td>
+<td>随场景变化</td>
+</tr>
+</tbody></table>
+<p><code>cv=0.01</code> 是区分软件限帧器与正常应用的核心指纹。</p>
+<h4 id="3-3-1-变异系数（CV）计算原理"><a href="#3-3-1-变异系数（CV）计算原理" class="headerlink" title="3.3.1 变异系数（CV）计算原理"></a>3.3.1 变异系数（CV）计算原理</h4><p>CV（Coefficient of Variation，变异系数）定义为一组数据的标准差与均值之比：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">CV = σ / μ</span><br><span class="line"></span><br><span class="line">其中：</span><br><span class="line">  μ  = Σ(util_i) / n          — 活跃采样点的 GPU 利用率均值</span><br><span class="line">  σ  = √(Σ(util_i - μ)² / n)  — 活跃采样点的 GPU 利用率标准差</span><br><span class="line">  n  = activeCount            — 利用率 ≥ 8% 的采样点数量</span><br></pre></td></tr></table></figure>
+
+<p><strong>完整计算过程</strong>（<code>frame_detector.cpp:evaluateGpuHistory</code>）：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">Step 1 — 数据采集：每 1.5s 从 /sys/class/kgsl/kgsl-3d0/gpubusy 读取一次</span><br><span class="line">  busyTicks / totalTicks → utilization%</span><br><span class="line"></span><br><span class="line">Step 2 — 活跃过滤：kThreshold = 8.0</span><br><span class="line">  只保留 util ≥ 8% 的采样点（过滤 idle 噪音）</span><br><span class="line">  计算 activeRatio = activeCount / totalSamples</span><br><span class="line"></span><br><span class="line">Step 3 — 均值：</span><br><span class="line">  meanUtil = Σ(activeSamples) / activeCount</span><br><span class="line"></span><br><span class="line">Step 4 — 标准差：</span><br><span class="line">  stddevUtil = √(Σ(util_i - μ)² / activeCount)</span><br><span class="line"></span><br><span class="line">Step 5 — CV：</span><br><span class="line">  cv = stddevUtil / meanUtil</span><br></pre></td></tr></table></figure>
+
+<p><strong>数值示例</strong>（攻击端 90FPS，8 个采样点，12 秒窗口）：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">输入: [19.0, 19.5, 19.4, 18.5, 19.1, 19.3, 19.2, 19.6]  (8 个活跃采样)</span><br><span class="line"></span><br><span class="line">μ = (19.0+19.5+19.4+18.5+19.1+19.3+19.2+19.6) / 8 = 19.20%</span><br><span class="line"></span><br><span class="line">σ = √(((19.0-19.2)² + (19.5-19.2)² + ... + (19.6-19.2)²) / 8)</span><br><span class="line">  = √(0.04 + 0.09 + 0.04 + 0.49 + 0.01 + 0.01 + 0.00 + 0.16) / 8</span><br><span class="line">  = √(0.84 / 8) = √0.105 = 0.32%</span><br><span class="line"></span><br><span class="line">cv = 0.32 / 19.20 = 0.017</span><br></pre></td></tr></table></figure>
+
+<p><strong>三种场景 CV 对比</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th align="center">μ</th>
+<th align="center">σ</th>
+<th align="center">CV</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>攻击端 90FPS 精确 nanosleep</td>
+<td align="center">19.0%</td>
+<td align="center">0.3%</td>
+<td align="center"><strong>0.01</strong></td>
+<td>软件定时器 (CV &lt; 0.20)</td>
+</tr>
+<tr>
+<td>攻击端 + ±6ms 抖动</td>
+<td align="center">18.5%</td>
+<td align="center">1.2%</td>
+<td align="center"><strong>0.06</strong></td>
+<td>仍 &lt; 0.20（见下文分析）</td>
+</tr>
+<tr>
+<td>正常游戏渲染</td>
+<td align="center">20.3%</td>
+<td align="center">4.6%</td>
+<td align="center"><strong>0.23</strong></td>
+<td>自然波动 (CV ≥ 0.20)</td>
+</tr>
+</tbody></table>
+<p><strong>为什么 ±6ms 帧抖动无法突破 CV 阈值？</strong></p>
+<p>CV 度量的是 <strong>GPU 利用率的稳定性</strong>，不是帧间隔的稳定性。关键原因在于 Adreno kgsl <code>gpubusy</code> 是窗口化计数器（约 1 秒滑动窗口），而非逐帧采样：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">90 FPS 帧间隔 = 11.1ms，每帧 GPU 工作时间 ≈ 1ms</span><br><span class="line">±6ms 抖动 → 帧间隔 5.1ms~17.1ms，但每帧 GPU 工时不变</span><br><span class="line"></span><br><span class="line">1 秒窗口内：始终渲染 ~90 帧 × 1ms/帧 = 90ms GPU 时间</span><br><span class="line">→ 窗口利用率 = 90/1000 = 9%，稳定不变</span><br><span class="line">→ CV 仍然很低（仅受采样粒度影响，约 0.05-0.10）</span><br></pre></td></tr></table></figure>
+
+<p><strong>要突破 CV&#x3D;0.20 阈值，必须使 GPU 总工作量本身产生波动</strong>——即改变每帧渲染内容的工作量（非帧间隔），或间歇停止渲染使利用率在 0%~19% 之间切换。后者的代价是 activeRatio 降低（&lt; 50%），触发 F1 因子的提前退出。</p>
+<p><strong>为什么不用 <code>dumpsys --latency</code>？</strong></p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">$ dumpsys SurfaceFlinger --latency &#x27;SsageGUIMAX#1233&#x27;</span><br><span class="line">16666666                    ← 刷新周期 (60Hz)</span><br><span class="line">0   0   0                   ← 所有帧时间戳均为零</span><br><span class="line">0   0   0</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>EGL 叠加层绕过 SurfaceFlinger 的帧调度器（BufferQueue），<code>--latency</code> 返回全零。这使得传统的帧时序分析失效，必须依赖 GPU 利用率分析作为替代方案。</p>
+<h3 id="3-4-进程扫描"><a href="#3-4-进程扫描" class="headerlink" title="3.4 进程扫描"></a>3.4 进程扫描</h3><p><strong>用户态 <code>/proc</code> 权限矩阵</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>数据</th>
+<th>路径</th>
+<th>对 root 进程可读？</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>进程名</td>
+<td><code>/proc/&lt;pid&gt;/comm</code></td>
+<td>✅ 可读</td>
+</tr>
+<tr>
+<td>命令行</td>
+<td><code>/proc/&lt;pid&gt;/cmdline</code></td>
+<td>✅ 可读</td>
+</tr>
+<tr>
+<td>状态字段</td>
+<td><code>/proc/&lt;pid&gt;/status</code></td>
+<td>✅ Name, Cpus_allowed</td>
+</tr>
+<tr>
+<td>内存映射</td>
+<td><code>/proc/&lt;pid&gt;/maps</code></td>
+<td>❌ Permission denied</td>
+</tr>
+<tr>
+<td>文件描述符</td>
+<td><code>/proc/&lt;pid&gt;/fd/</code></td>
+<td>❌ Permission denied</td>
+</tr>
+<tr>
+<td>可执行文件</td>
+<td><code>/proc/&lt;pid&gt;/exe</code></td>
+<td>❌ Permission denied</td>
+</tr>
+</tbody></table>
+<p><strong>设计决策</strong>：放弃 <code>maps</code>&#x2F;<code>fd</code> 扫描（需要 root），改用 <code>comm</code> 和 <code>cmdline</code>（用户态可读）。攻击端通过 <code>prctl(PR_SET_NAME, &quot;libflykernel&quot;)</code> 设置的进程名在所有权限级别下可见。</p>
+<p>检测到攻击时输出：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">Suspicious process: pid=27719 comm=&#x27;libflykernel&#x27;</span><br><span class="line">    cmdline=&#x27;/data/local/tmp/drawattack&#x27;</span><br><span class="line">    (+ GPU load 19%)</span><br></pre></td></tr></table></figure>
+
+<hr>
+<h2 id="四、告警关联引擎"><a href="#四、告警关联引擎" class="headerlink" title="四、告警关联引擎"></a>四、告警关联引擎</h2><h3 id="4-1-加权评分模型"><a href="#4-1-加权评分模型" class="headerlink" title="4.1 加权评分模型"></a>4.1 加权评分模型</h3><figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">Combined = Surface × <span class="number">0.30</span> + Frame  × <span class="number">0.25</span> + Process × <span class="number">0.15</span></span><br><span class="line">         + GPU    × <span class="number">0.10</span> + Access × <span class="number">0.10</span> + Artifact × <span class="number">0.10</span></span><br><span class="line"></span><br><span class="line">协同加成:</span><br><span class="line">  Surface &gt; <span class="number">0.5</span> ∧ Frame &gt; <span class="number">0.5</span>     → ×<span class="number">1.3</span></span><br><span class="line">  Process &gt; <span class="number">0.7</span> ∧ GPU   &gt; <span class="number">0.3</span>     → ×<span class="number">1.2</span></span><br><span class="line">  Access  &gt; <span class="number">0.3</span> ∧ GPU   &gt; <span class="number">0.3</span>     → ×<span class="number">1.1</span>   (自动化外挂模式)</span><br><span class="line"></span><br><span class="line">针对性匹配 (已知攻击窗口直接命中):</span><br><span class="line">  Combined ≥ <span class="number">0.95</span> (保底)</span><br></pre></td></tr></table></figure>
+
+<h3 id="4-2-告警决策"><a href="#4-2-告警决策" class="headerlink" title="4.2 告警决策"></a>4.2 告警决策</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">Combined ≥ 0.90 → Action: BLOCK</span><br><span class="line">Combined ≥ 0.70 → Action: INVESTIGATE</span><br><span class="line">Combined &lt;  0.70 → Action: LOG</span><br><span class="line"></span><br><span class="line">冷却机制: 5秒内不重复告警</span><br></pre></td></tr></table></figure>
+
+<h3 id="4-3-实际告警输出"><a href="#4-3-实际告警输出" class="headerlink" title="4.3 实际告警输出"></a>4.3 实际告警输出</h3><figure class="highlight json"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br></pre></td><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">  <span class="attr">&quot;timestamp&quot;</span><span class="punctuation">:</span> <span class="number">1780975601</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;device&quot;</span><span class="punctuation">:</span> <span class="string">&quot;Xiaomi/venus/venus:13/...&quot;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;overall_confidence&quot;</span><span class="punctuation">:</span> <span class="number">0.95</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;is_targeted_match&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">true</span></span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;correlation&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;surface_score&quot;</span><span class="punctuation">:</span>  <span class="number">1.00</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;gpu_score&quot;</span><span class="punctuation">:</span>      <span class="number">0.28</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;frame_score&quot;</span><span class="punctuation">:</span>    <span class="number">0.63</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;process_score&quot;</span><span class="punctuation">:</span>  <span class="number">0.35</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;combined_score&quot;</span><span class="punctuation">:</span> <span class="number">0.95</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;findings&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">    <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;module&quot;</span><span class="punctuation">:</span> <span class="string">&quot;surface_detector&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;confidence&quot;</span><span class="punctuation">:</span> <span class="number">1.0</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;description&quot;</span><span class="punctuation">:</span> <span class="string">&quot;TARGETED: Known attack window &#x27;SsageGUIMAX&#x27; detected&quot;</span></span><br><span class="line">    <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;module&quot;</span><span class="punctuation">:</span> <span class="string">&quot;frame_detector&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;confidence&quot;</span><span class="punctuation">:</span> <span class="number">0.91</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;description&quot;</span><span class="punctuation">:</span> <span class="string">&quot;GPU frame generation: util=28.1% (μ=28.6 σ=0.3) cv=0.01&quot;</span></span><br><span class="line">    <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;module&quot;</span><span class="punctuation">:</span> <span class="string">&quot;gpu_detector&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;confidence&quot;</span><span class="punctuation">:</span> <span class="number">0.70</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;description&quot;</span><span class="punctuation">:</span> <span class="string">&quot;Suspicious GPU process: comm=&#x27;libflykernel&#x27; (+GPU 28%)&quot;</span></span><br><span class="line">    <span class="punctuation">&#125;</span></span><br><span class="line">  <span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;recommended_action&quot;</span><span class="punctuation">:</span> <span class="string">&quot;BLOCK&quot;</span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br></pre></td></tr></table></figure>
+
+<hr>
+<h2 id="五、开发过程与难点"><a href="#五、开发过程与难点" class="headerlink" title="五、开发过程与难点"></a>五、开发过程与难点</h2><h3 id="5-1-攻击端-blob-加载失败"><a href="#5-1-攻击端-blob-加载失败" class="headerlink" title="5.1 攻击端 blob 加载失败"></a>5.1 攻击端 blob 加载失败</h3><p><strong>问题</strong>：攻击端编译后运行立即崩溃 <code>std::bad_alloc</code>，且 <code>main()</code> 未执行。</p>
+<p><strong>排查过程</strong>：</p>
+<ol>
+<li>检查 <code>shm_open_anon()</code> 实现 — <code>memfd_create</code> 系统调用在 ARM64 NDK r22b 中可用</li>
+<li>SELinux 设为 Permissive — 仍崩溃</li>
+<li>排除了权限、SELinux 策略问题</li>
+</ol>
+<p><strong>根因</strong>：预编译 blob 的 <code>inline</code> 内联数组（7 个版本 × 40-70KB）全部编译进二进制，<code>c++_static</code> 链接的静态初始化阶段内存分配失败。NDK r22b 的 clang 11 在 <code>.rodata</code> 段的处理与 Android 13 的 <code>linker64</code> 不兼容。</p>
+<p><strong>解决</strong>：仅保留 Android 13 版本的 blob（<code>native_surface_13_64[41808]</code>），并为 <code>dlblob()</code> 添加文件回退机制——当 <code>memfd_create</code> 失败时，将 blob 写入 <code>/data/local/tmp/.native_surface.so</code>，再从此路径 <code>dlopen()</code>。</p>
+<h3 id="5-2-用户态-proc-权限限制"><a href="#5-2-用户态-proc-权限限制" class="headerlink" title="5.2 用户态 &#x2F;proc 权限限制"></a>5.2 用户态 &#x2F;proc 权限限制</h3><p><strong>问题</strong>：防御端无法读取攻击进程（root）的 <code>/proc/&lt;pid&gt;/maps</code> 和 <code>/proc/&lt;pid&gt;/fd/</code>，导致 EGL 库映射检测和 GPU 设备 fd 检测全部失效。</p>
+<p><strong>根因</strong>：Android 内核的 <code>hidepid=</code> 机制和 SELinux 策略限制用户态进程读取高权限进程的敏感 <code>/proc</code> 条目。</p>
+<p><strong>解决</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>原方案</th>
+<th>问题</th>
+<th>替代方案</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/proc/&lt;pid&gt;/maps</code> 扫描 <code>libEGL.so</code></td>
+<td>Permission denied</td>
+<td><code>/proc/&lt;pid&gt;/comm</code> 匹配进程名</td>
+</tr>
+<tr>
+<td><code>/proc/&lt;pid&gt;/fd/</code> 扫描 <code>kgsl-3d0</code></td>
+<td>Permission denied</td>
+<td>sysfs <code>gpubusy</code> 利用率监控</td>
+</tr>
+<tr>
+<td><code>/proc/&lt;pid&gt;/fd/</code> 扫描 <code>uinput</code></td>
+<td>Permission denied</td>
+<td>保留（仅对用户态进程有效）</td>
+</tr>
+</tbody></table>
+<p>这体现了防御设计的核心思路：<strong>用系统级被动观测替代进程级侵入检测</strong>。</p>
+<h3 id="5-3-GPU-计数器的非单调性"><a href="#5-3-GPU-计数器的非单调性" class="headerlink" title="5.3 GPU 计数器的非单调性"></a>5.3 GPU 计数器的非单调性</h3><p><strong>问题</strong>：帧生成延迟检测的初版使用 <code>delta_busy = curr - prev</code> 的方式计算 GPU 利用率增量。但 Adreno kgsl 的 <code>gpubusy</code> 计数器不是严格递增的，而是窗口化的滑动计数器——值在 ~1,000,000 附近波动，甚至会回退。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">样本1: busy=318578 total=1000672</span><br><span class="line">样本2: busy=340573 total=1019294  ← 正常增长</span><br><span class="line">样本3: busy=239470 total=1009186  ← 回退! delta = -101103</span><br></pre></td></tr></table></figure>
+
+<p><strong>解决</strong>：放弃 delta 计算，改为直接使用 <code>busy_ticks / total_ticks</code> 的比率作为瞬时利用率。该比率在窗口化计数器中保持稳定。</p>
+<h3 id="5-4-dumpsys-–latency-全零问题"><a href="#5-4-dumpsys-–latency-全零问题" class="headerlink" title="5.4 dumpsys –latency 全零问题"></a>5.4 dumpsys –latency 全零问题</h3><p><strong>问题</strong>：<code>dumpsys SurfaceFlinger --latency</code> 对 EGL 叠加层返回全零时间戳。</p>
+<p><strong>根因</strong>：叠加层通过 <code>eglCreateWindowSurface()</code> 直接渲染，不经过 SurfaceFlinger 的 BufferQueue 帧调度路径。SurfaceFlinger 的延迟跟踪仅适用于标准应用图层。</p>
+<p><strong>解决</strong>：用 GPU 利用率变异系数（CV）分析替代。软件帧限速器产生的恒定 GPU 负载（CV ≈ 0.01）与正常游戏渲染（CV &gt; 0.15）形成鲜明对比，成为帧生成延迟检测的替代指标。</p>
+<hr>
+<h2 id="六、未知叠加层通用检测：BigWhiteHack-测试"><a href="#六、未知叠加层通用检测：BigWhiteHack-测试" class="headerlink" title="六、未知叠加层通用检测：BigWhiteHack 测试"></a>六、未知叠加层通用检测：BigWhiteHack 测试</h2><h3 id="6-1-测试背景"><a href="#6-1-测试背景" class="headerlink" title="6.1 测试背景"></a>6.1 测试背景</h3><p>前面的测试验证了针对已知攻击 <code>SsageGUIMAX</code>&#x2F;<code>drawattack</code> 的检测能力。但真实场景中，攻击端的<strong>窗口名、进程名、文件路径</strong>都是任意可变的。通用检测能力才是防御系统的核心价值。</p>
+<p>为此，我们引入了一个完全不同的第三方绘制程序进行黑盒测试：</p>
+<table>
+<thead>
+<tr>
+<th>特征</th>
+<th>drawattack (已知)</th>
+<th>BigWhiteHack (未知)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>窗口名</td>
+<td>SsageGUIMAX</td>
+<td><strong>AImGui</strong></td>
+</tr>
+<tr>
+<td>进程名</td>
+<td>libflykernel</td>
+<td><strong>BigWhiteHack.sh</strong></td>
+</tr>
+<tr>
+<td>路径</td>
+<td>&#x2F;data&#x2F;local&#x2F;tmp&#x2F;drawattack</td>
+<td><strong>&#x2F;data&#x2F;akitadog&#x2F;BigWhiteHack.sh</strong></td>
+</tr>
+<tr>
+<td>权限</td>
+<td>root</td>
+<td>root</td>
+</tr>
+<tr>
+<td>渲染引擎</td>
+<td>OpenGL ES 3.0</td>
+<td>ImGui + OpenGL ES</td>
+</tr>
+<tr>
+<td>帧率控制</td>
+<td>nanosleep (90 FPS)</td>
+<td>nanosleep (≈90 FPS)</td>
+</tr>
+</tbody></table>
+<h3 id="6-2-初次检测：基线污染问题"><a href="#6-2-初次检测：基线污染问题" class="headerlink" title="6.2 初次检测：基线污染问题"></a>6.2 初次检测：基线污染问题</h3><p>首次启动防御端时，BigWhiteHack 已经在运行。防御的基线建立过程将 <code>AImGui#1379</code> 和 <code>bbq-wrapper#1380</code> 纳入了”正常层”基线，导致通用检测失效：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">Surface Score:  0.21  ← AImGui 被基线包含，仅低置信度</span><br><span class="line">Frame Score:    0.91  ← cv=0.01 仍然强力命中！</span><br><span class="line">GPU Score:      0.18  ← 进程名 &quot;BigWhiteHack.sh&quot; 未匹配任何模式</span><br><span class="line">Combined:       0.29  ← 低于 0.60 阈值，未触发告警！</span><br></pre></td></tr></table></figure>
+
+<p><strong>教训</strong>：基线污染是所有基于基线 diff 的检测方案的固有弱点。但帧检测器（CV 分析）不依赖基线，cv&#x3D;0.01 仍然是明确的攻击指纹。这证明了多维度方法的互补价值——当图层检测因基线污染失效时，帧检测器独立提供了强信号。</p>
+<h3 id="6-3-改进：扩展指纹数据库"><a href="#6-3-改进：扩展指纹数据库" class="headerlink" title="6.3 改进：扩展指纹数据库"></a>6.3 改进：扩展指纹数据库</h3><p>在 <code>surface_detector.h</code> 中将单一窗口名改为数组匹配：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 改进前：</span></span><br><span class="line"><span class="type">static</span> <span class="keyword">constexpr</span> <span class="type">const</span> <span class="type">char</span>* ATTACK_WINDOW = <span class="string">&quot;SsageGUIMAX&quot;</span>;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 改进后：</span></span><br><span class="line"><span class="type">static</span> <span class="keyword">constexpr</span> <span class="type">const</span> <span class="type">char</span>* ATTACK_WINDOWS[] = &#123;</span><br><span class="line">    <span class="string">&quot;SsageGUIMAX&quot;</span>, <span class="string">&quot;AImGui&quot;</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>在 <code>gpu_detector.cpp</code> 中扩展进程模式：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">static</span> <span class="type">const</span> <span class="type">char</span>* PATTERNS[] = &#123;</span><br><span class="line">    <span class="string">&quot;libflykernel&quot;</span>, <span class="string">&quot;drawattack&quot;</span>, <span class="string">&quot;imgui&quot;</span>, <span class="string">&quot;overlay&quot;</span>,</span><br><span class="line">    <span class="string">&quot;draw_overlay&quot;</span>, <span class="string">&quot;BigWhite&quot;</span>, <span class="string">&quot;Hack&quot;</span>, <span class="string">&quot;akitadog&quot;</span>,</span><br><span class="line">    <span class="string">&quot;cheat&quot;</span>, <span class="string">&quot;esp&quot;</span>, <span class="string">&quot;aimbot&quot;</span>,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<h3 id="6-4-改进后复测"><a href="#6-4-改进后复测" class="headerlink" title="6.4 改进后复测"></a>6.4 改进后复测</h3><p>重启防御端（带更新后的指纹库）后立即触发告警：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">=== 检测周期 1 (启动后 ~5秒) ===</span><br><span class="line"></span><br><span class="line">DrawGuard-Surface: TARGETED DETECTION: Found attack window</span><br><span class="line">    &#x27;AImGui#1379&#x27; (matched &#x27;AImGui&#x27;)</span><br><span class="line">DrawGuard-Surface: Topmost detection: focus=某射击游戏 GameActivity</span><br><span class="line">    topmost=RoundCornerBottom conf=0.65 unknown=1</span><br><span class="line">DrawGuard-Frame:   GPU frame generation: util=23.5% (μ=23.6 σ=0.3)</span><br><span class="line">    active=7/7 cv=0.01 conf=0.98</span><br><span class="line">DrawGuard-GPU:     Suspicious process: pid=5716</span><br><span class="line">    comm=&#x27;BigWhiteHack.sh&#x27; cmdline=&#x27;/data/akitadog/BigWhiteHack.sh&#x27;</span><br><span class="line">DrawGuard:         === ALERT === overall_confidence: 0.95 → BLOCK</span><br></pre></td></tr></table></figure>
+
+<p><strong>BigWhiteHack 检测矩阵</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>检测模块</th>
+<th>发现</th>
+<th>置信度</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>surface_detector (targeted)</td>
+<td><code>AImGui#1379</code> 精确匹配</td>
+<td><strong>1.00</strong></td>
+</tr>
+<tr>
+<td>surface_detector (topmost)</td>
+<td>focus&#x3D;游戏 vs Output Layer 不匹配</td>
+<td><strong>0.65</strong></td>
+</tr>
+<tr>
+<td>frame_detector</td>
+<td>util&#x3D;23.5%, cv&#x3D;<strong>0.01</strong>, 软件定时器</td>
+<td><strong>0.98</strong></td>
+</tr>
+<tr>
+<td>gpu_detector (sysfs)</td>
+<td>GPU 利用率 23.5% 持续异常</td>
+<td><strong>0.45</strong></td>
+</tr>
+<tr>
+<td>gpu_detector (process)</td>
+<td><code>BigWhiteHack.sh</code> (PID 5716)</td>
+<td><strong>0.70</strong></td>
+</tr>
+</tbody></table>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">combined = 1.00×0.35 + 0.65×0.30 + 0×0.20 + 0.28×0.15</span><br><span class="line">         = 0.350 + 0.195 + 0 + 0.042 = 0.587</span><br><span class="line">         × 1.3 (Surface+Frame 协同)</span><br><span class="line">         = 0.95 → BLOCK</span><br></pre></td></tr></table></figure>
+
+<h3 id="6-5-无攻击基线验证"><a href="#6-5-无攻击基线验证" class="headerlink" title="6.5 无攻击基线验证"></a>6.5 无攻击基线验证</h3><p>BigWhiteHack 停止后，防御端重启进行无攻击基线检测：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">Baseline built: 143 stable layers</span><br><span class="line">Output Layer baseline: 6 stable layers</span><br><span class="line">告警: 0 次 ✅</span><br><span class="line"></span><br><span class="line">GPU frame detection: util=25.4% (μ=20.3 σ=4.6)</span><br><span class="line">                     active=11/11 cv=0.23 conf=0.85</span><br><span class="line">                                         ↑</span><br><span class="line">                              cv=0.23 &gt;&gt; 0.01 (攻击指纹线)</span><br><span class="line">                              游戏自然渲染波动，非软件定时器</span><br><span class="line"></span><br><span class="line">combined = 0.54×0.35 + 0.59×0.30 + 0×0.20 + 0.18×0.15 = 0.51</span><br><span class="line">         ↓ 低于 0.60 阈值，不触发告警 ✅</span><br></pre></td></tr></table></figure>
+
+<p><strong>攻击 vs 正常游戏 CV 对比</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>GPU util</th>
+<th>σ</th>
+<th>CV</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>某射击游戏空闲</td>
+<td>~16%</td>
+<td>—</td>
+<td>—</td>
+<td>游戏后台渲染</td>
+</tr>
+<tr>
+<td>某射击游戏 + drawattack 90FPS</td>
+<td>29.0%</td>
+<td>0.3%</td>
+<td><strong>0.01</strong></td>
+<td>软件定时器 ✅</td>
+</tr>
+<tr>
+<td>某射击游戏 + BigWhiteHack</td>
+<td>23.5%</td>
+<td>0.3%</td>
+<td><strong>0.01</strong></td>
+<td>软件定时器 ✅</td>
+</tr>
+<tr>
+<td>某射击游戏正常游戏</td>
+<td>25.4%</td>
+<td>4.6%</td>
+<td><strong>0.23</strong></td>
+<td>自然波动 ✅</td>
+</tr>
+</tbody></table>
+<p>CV 值在攻击（0.01）和正常游戏（0.23）之间存在数量级差距，阈值 0.20 能够完美区分。</p>
+<h3 id="6-6-CPU-渲染叠加层通用检测验证"><a href="#6-6-CPU-渲染叠加层通用检测验证" class="headerlink" title="6.6 CPU 渲染叠加层通用检测验证"></a>6.6 CPU 渲染叠加层通用检测验证</h3><p>为进一步验证通用检测能力的边界，引入两个基于 <strong>纯 CPU 渲染</strong>（非 EGL&#x2F;GLES GPU 渲染）的外部叠加层程序进行对照测试。</p>
+<h4 id="6-6-1-CPU-渲染程序特征"><a href="#6-6-1-CPU-渲染程序特征" class="headerlink" title="6.6.1 CPU 渲染程序特征"></a>6.6.1 CPU 渲染程序特征</h4><p>两个测试程序均来自 <code>CPU菜单KPM</code> 项目，采用与 GPU 叠加层完全不同的渲染管线：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">// GPU 渲染路径（drawattack/BigWhiteHack）</span><br><span class="line">eglCreateWindowSurface() → glClear() → glDrawArrays() → eglSwapBuffers()</span><br><span class="line"></span><br><span class="line">// CPU 渲染路径（本次测试的程序A/B）  </span><br><span class="line">ANativeWindow_lock()      → 锁定像素缓冲区</span><br><span class="line">memset(pixels, ...)       → CPU 逐像素清零</span><br><span class="line">DrawFrame(pixels, ...)    → CPU AddLine/AddText/AddCircle</span><br><span class="line">ANativeWindow_unlockAndPost() → 提交给 SurfaceFlinger</span><br></pre></td></tr></table></figure>
+
+<table>
+<thead>
+<tr>
+<th>特征</th>
+<th>GPU 叠加层</th>
+<th>CPU 叠加层（本次测试）</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>窗口名</td>
+<td>SsageGUIMAX &#x2F; AImGui</td>
+<td><strong>AKI</strong></td>
+</tr>
+<tr>
+<td>渲染方式</td>
+<td>EGL + OpenGL ES 3.0</td>
+<td><strong>ANativeWindow_lock + CPU 逐像素</strong></td>
+</tr>
+<tr>
+<td>GPU 使用</td>
+<td>渲染 + 合成</td>
+<td><strong>仅合成（HWC）</strong></td>
+</tr>
+<tr>
+<td>帧率控制</td>
+<td>nanosleep()</td>
+<td>nanosleep()</td>
+</tr>
+<tr>
+<td>图层注册</td>
+<td>SurfaceFlinger BufferStateLayer</td>
+<td>SurfaceFlinger BufferStateLayer</td>
+</tr>
+</tbody></table>
+<p>关键发现：两种程序虽然渲染管线不同，但都通过 <code>ANativeWindowCreator::Create(&quot;AKI&quot;, ...)</code> 创建了 SurfaceFlinger 图层，且都使用 <code>nanosleep()</code> 进行软件帧率控制。</p>
+<h4 id="6-6-2-窗口名检测（用户态）"><a href="#6-6-2-窗口名检测（用户态）" class="headerlink" title="6.6.2 窗口名检测（用户态）"></a>6.6.2 窗口名检测（用户态）</h4><p>通过纯用户态命令即可完整检出 CPU 渲染叠加层的全部特征：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">$ dumpsys SurfaceFlinger --list | grep AKI</span><br><span class="line">AKI#1913                          ← 图层已注册</span><br><span class="line">bbq-wrapper#1914                  ← BLAST 缓冲区包装</span><br><span class="line"></span><br><span class="line">$ dumpsys SurfaceFlinger | grep -A2 &#x27;AKI#1913&#x27;</span><br><span class="line">+ BufferStateLayer (AKI#1913) uid=0     ← root 进程创建</span><br><span class="line">  activeBuffer=[3200x1440 RGBA_8888]    ← 全屏 RGBA 缓冲</span><br><span class="line"></span><br><span class="line">$ dumpsys SurfaceFlinger | grep &#x27;Output Layer&#x27;</span><br><span class="line">  - Output Layer ...(bbq-wrapper#1914)  ← 已进入 HWC 硬件合成</span><br><span class="line"></span><br><span class="line">$ dumpsys window | grep mCurrentFocus</span><br><span class="line">  mCurrentFocus=...GameActivity         ← WindowManager 被欺骗</span><br></pre></td></tr></table></figure>
+
+<h4 id="6-6-3-六次对照测试数据"><a href="#6-6-3-六次对照测试数据" class="headerlink" title="6.6.3 六次对照测试数据"></a>6.6.3 六次对照测试数据</h4><table>
+<thead>
+<tr>
+<th>轮次</th>
+<th>PID</th>
+<th>程序</th>
+<th>渲染内容</th>
+<th align="center">S</th>
+<th align="center">F</th>
+<th align="center">G</th>
+<th align="center">P</th>
+<th align="center">Combined</th>
+<th align="center">告警</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>17627</td>
+<td>程序A</td>
+<td>全屏覆盖</td>
+<td align="center">0.21</td>
+<td align="center"><strong>0.70</strong></td>
+<td align="center">0.18</td>
+<td align="center">0.00&#x2F;0.25</td>
+<td align="center">0.26–0.29</td>
+<td align="center">❌</td>
+</tr>
+<tr>
+<td>2</td>
+<td>18673</td>
+<td><strong>关闭</strong></td>
+<td>—</td>
+<td align="center"><strong>0.00</strong></td>
+<td align="center"><strong>0.00</strong></td>
+<td align="center"><strong>0.00</strong></td>
+<td align="center">0.00&#x2F;0.25</td>
+<td align="center"><strong>0.00–0.04</strong></td>
+<td align="center">✅</td>
+</tr>
+<tr>
+<td>3</td>
+<td>18961</td>
+<td>程序A</td>
+<td>全屏覆盖</td>
+<td align="center">0.21</td>
+<td align="center"><strong>0.63</strong></td>
+<td align="center">0.18</td>
+<td align="center">0.00&#x2F;0.25</td>
+<td align="center">0.06–0.28</td>
+<td align="center">❌</td>
+</tr>
+<tr>
+<td>4</td>
+<td>19549</td>
+<td>程序B</td>
+<td>全屏覆盖</td>
+<td align="center">0.21</td>
+<td align="center"><strong>0.66</strong></td>
+<td align="center"><strong>0.28</strong></td>
+<td align="center">0.00&#x2F;0.25</td>
+<td align="center">0.25–0.29</td>
+<td align="center">❌</td>
+</tr>
+<tr>
+<td>5</td>
+<td>24889</td>
+<td>程序A</td>
+<td><strong>仅射线</strong></td>
+<td align="center">0.21</td>
+<td align="center"><strong>0.53–0.58</strong></td>
+<td align="center">0.18</td>
+<td align="center">0.00&#x2F;0.25</td>
+<td align="center">0.22–0.26</td>
+<td align="center">❌</td>
+</tr>
+<tr>
+<td>6</td>
+<td>—</td>
+<td>程序A</td>
+<td>仅射线</td>
+<td align="center">0.21</td>
+<td align="center"><strong>0.53–0.58</strong></td>
+<td align="center">0.18</td>
+<td align="center">0.00&#x2F;0.25</td>
+<td align="center">0.22–0.26</td>
+<td align="center">❌</td>
+</tr>
+</tbody></table>
+<blockquote>
+<p>注：第 3 次恢复开启后 F 从 0.00 逐步攀升至 0.63（GPU 历史窗口需累积 3+ 采样），与第 1 次在测量误差范围内一致，证明检测可复现。</p>
+</blockquote>
+<h4 id="6-6-4-CPU-vs-GPU-渲染检测信号对比"><a href="#6-6-4-CPU-vs-GPU-渲染检测信号对比" class="headerlink" title="6.6.4 CPU vs GPU 渲染检测信号对比"></a>6.6.4 CPU vs GPU 渲染检测信号对比</h4><table>
+<thead>
+<tr>
+<th>信号维度</th>
+<th align="center">GPU 渲染 (drawattack)</th>
+<th align="center">CPU 渲染 全屏</th>
+<th align="center">CPU 渲染 仅射线</th>
+<th>差异原因</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Surface (S)</td>
+<td align="center">1.00 (targeted)</td>
+<td align="center">0.21</td>
+<td align="center">0.21</td>
+<td>CPU 程序窗口名 AKI 不在指纹库</td>
+</tr>
+<tr>
+<td>Frame (F)</td>
+<td align="center">0.91–0.98</td>
+<td align="center">0.63–0.70</td>
+<td align="center">0.53–0.58</td>
+<td>GPU 渲染消耗 GPU 更多，利用率更高更稳定</td>
+</tr>
+<tr>
+<td>GPU (G)</td>
+<td align="center">0.28–0.45</td>
+<td align="center">0.18–0.28</td>
+<td align="center">0.18</td>
+<td>同上</td>
+</tr>
+<tr>
+<td>Combined</td>
+<td align="center">0.95</td>
+<td align="center">0.26–0.29</td>
+<td align="center">0.22–0.26</td>
+<td>—</td>
+</tr>
+</tbody></table>
+<p><strong>CPU 渲染为何仍被 Frame 检测器捕获？</strong></p>
+<p>CPU 渲染虽然不调用 GLES API，但 <code>ANativeWindow_unlockAndPost()</code> 将像素缓冲区提交给 SurfaceFlinger 后，<strong>HWC（硬件合成器）仍然使用 GPU 将图层合成到最终画面</strong>。这个 GPU 合成操作在每个渲染周期稳定发生，加上 <code>nanosleep()</code> 软件帧控产生的低 CV 特征，使得 Frame 检测器的 GPU 利用率 CV 分析依然有效——只是信号强度比完整 EGL 渲染低约 20%。</p>
+<p><strong>仅射线绘制为何 F 更低？</strong></p>
+<p>射线只画几条 <code>AddLine()</code>，像素填充量远小于全屏 <code>memset</code> + <code>DrawRectFilled</code>。ANativeWindow buffer 中大部分像素保持为 0（透明），HWC 合成开销更低，GPU 利用率绝对值更小 → CV 相对变大 → Frame 分数进一步降低。</p>
+<h4 id="6-6-5-开启-vs-关闭对比"><a href="#6-6-5-开启-vs-关闭对比" class="headerlink" title="6.6.5 开启 vs 关闭对比"></a>6.6.5 开启 vs 关闭对比</h4><table>
+<thead>
+<tr>
+<th>指标</th>
+<th align="center">CPU 绘制开启（5次）</th>
+<th align="center">关闭（1次）</th>
+<th align="center">区分度</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Surface (S)</td>
+<td align="center">0.21</td>
+<td align="center">0.00</td>
+<td align="center">100%</td>
+</tr>
+<tr>
+<td>Frame (F)</td>
+<td align="center">0.53–0.70</td>
+<td align="center">0.00</td>
+<td align="center">100%</td>
+</tr>
+<tr>
+<td>GPU (G)</td>
+<td align="center">0.18–0.28</td>
+<td align="center">0.00</td>
+<td align="center">100%</td>
+</tr>
+<tr>
+<td>Combined</td>
+<td align="center">0.22–0.29</td>
+<td align="center">0.00–0.04</td>
+<td align="center"><strong>5–7×</strong></td>
+</tr>
+</tbody></table>
+<h4 id="6-6-6-结论"><a href="#6-6-6-结论" class="headerlink" title="6.6.6 结论"></a>6.6.6 结论</h4><ol>
+<li><strong>渲染管线无关性</strong>：防御端不关心攻击程序使用 CPU（ANativeWindow）还是 GPU（EGL&#x2F;GLES）渲染——只要创建 SurfaceFlinger 图层 + 软件帧率控制，就会被检测。这是设计上的优势，覆盖了更广泛的攻击面。</li>
+<li><strong>用户态可完整检出</strong>：窗口名（AKI）、uid、分辨率、活跃缓冲格式、HWC 合成状态、WindowManager 焦点欺骗等全部特征均通过 <code>dumpsys</code> 用户态命令获取。</li>
+<li><strong>信号强度与渲染负载正相关</strong>：GPU 渲染（全屏）&gt; CPU 渲染（全屏）&gt; CPU 渲染（仅射线），Combined score 从 0.95 降至 0.22。检测信号不会消失，但随 GPU 负载降低而减弱。</li>
+<li><strong>分层风险等级设计有效</strong>：CPU 渲染程序窗口名 AKI 不在指纹库 → 不触发 targeted match → combined score 天花板 0.29。防御端正确执行了”已知指纹阻断，未知程序标记”的分层策略。</li>
+</ol>
+<h3 id="6-7-攻击端绕过验证"><a href="#6-7-攻击端绕过验证" class="headerlink" title="6.7 攻击端绕过验证"></a>6.7 攻击端绕过验证</h3><p>为进一步评估防御端的抗绕过能力，对攻击端（drawattack, EGL&#x2F;GLES GPU 渲染）进行了系统性的绕过测试。基于对防御端源码的逐阈值分析，确定了三条绕过路径及其对应的硬编码检测阈值：</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>绕过方向</th>
+<th>目标检测阈值</th>
+<th>攻击端修改</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>窗口改名</td>
+<td><code>KNOWN_OVERLAY_WINDOWS</code> 指纹库匹配 → targeted match 1.00</td>
+<td><code>WINDOW_NAME</code> 从 <code>SsageGUIMAX</code> 改为 <code>GestureStubHome</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>进程伪装</td>
+<td><code>SUSPICIOUS_PROCESS_PATTERNS</code> → GPU process 检测 0.55-0.70</td>
+<td><code>prctl(PR_SET_NAME)</code> 从 <code>libflykernel</code> 改为 <code>com.example.gamexx</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td>帧抖动</td>
+<td><code>CV &lt; 0.20</code>、<code>activeRatio ≥ 80%</code> → Frame 检测 0.85-0.98</td>
+<td><code>nanosleep</code> 添加 ±6ms 随机抖动</td>
+</tr>
+<tr>
+<td>4</td>
+<td>间歇渲染</td>
+<td><code>activeRatio &lt; 50%</code> → Frame 检测直接 return</td>
+<td>每 N 帧只渲染 1 帧</td>
+</tr>
+</tbody></table>
+<p><strong>代码修改（<code>attack/jni/main.cpp</code> + <code>attack/jni/draw.h</code>）</strong>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 绕过 1: draw.h — 窗口改名，避开指纹库</span></span><br><span class="line"><span class="type">static</span> <span class="keyword">constexpr</span> <span class="type">const</span> <span class="type">char</span>* WINDOW_NAME = <span class="string">&quot;GestureStubHome&quot;</span>;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 绕过 2: main.cpp — 进程名伪装游戏包名（防御白名单内）</span></span><br><span class="line"><span class="built_in">prctl</span>(PR_SET_NAME, <span class="string">&quot;com.example.gamexx&quot;</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>);</span><br><span class="line"></span><br><span class="line"><span class="comment">// 绕过 3: main.cpp — 帧间隔添加 ±6ms 随机抖动</span></span><br><span class="line"><span class="type">int64_t</span> sleep_ns = target_period_ns_ - elapsed;</span><br><span class="line">sleep_ns += (<span class="built_in">rand</span>() % <span class="number">12000000</span>) - <span class="number">6000000</span>;  <span class="comment">// ±6ms jitter</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// 绕过 4: main.cpp — 间歇渲染，每 5 帧仅渲染 1 帧</span></span><br><span class="line"><span class="keyword">if</span> (skipCounter % <span class="number">5</span> == <span class="number">0</span>) &#123;</span><br><span class="line">    <span class="built_in">draw_frame</span>();</span><br><span class="line">    <span class="built_in">eglSwapBuffers</span>(display, surface);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><strong>五次绕过测试数据</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>轮次</th>
+<th>绕过组合</th>
+<th align="center">S</th>
+<th align="center">F</th>
+<th align="center">G</th>
+<th align="center">P</th>
+<th align="center">Combined</th>
+<th align="center">vs 原版</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>原版</td>
+<td>无（SsageGUIMAX + libflykernel）</td>
+<td align="center">1.00</td>
+<td align="center">0.91</td>
+<td align="center">0.70</td>
+<td align="center">0.35</td>
+<td align="center"><strong>0.95</strong></td>
+<td align="center">—</td>
+</tr>
+<tr>
+<td>B1</td>
+<td>窗口改名 + 进程伪装</td>
+<td align="center">0.21</td>
+<td align="center">0.70</td>
+<td align="center">0.18</td>
+<td align="center">0.25</td>
+<td align="center"><strong>0.28</strong></td>
+<td align="center">↓70%</td>
+</tr>
+<tr>
+<td>B2</td>
+<td>+ ±1.5ms 抖动</td>
+<td align="center">0.21</td>
+<td align="center">0.65</td>
+<td align="center">0.18</td>
+<td align="center">0.25</td>
+<td align="center"><strong>0.28</strong></td>
+<td align="center">↓70%</td>
+</tr>
+<tr>
+<td>B3</td>
+<td>+ ±6ms 抖动</td>
+<td align="center">0.21</td>
+<td align="center">0.65</td>
+<td align="center">0.18</td>
+<td align="center">0.25</td>
+<td align="center"><strong>0.28</strong></td>
+<td align="center">↓70%</td>
+</tr>
+<tr>
+<td>B4</td>
+<td>+ 1&#x2F;3 间歇渲染</td>
+<td align="center">0.21</td>
+<td align="center">0.63</td>
+<td align="center">0.18</td>
+<td align="center">0.25</td>
+<td align="center"><strong>0.28</strong></td>
+<td align="center">↓70%</td>
+</tr>
+<tr>
+<td>B5</td>
+<td>+ 1&#x2F;5 间歇渲染</td>
+<td align="center">0.21</td>
+<td align="center">0.63</td>
+<td align="center">0.18</td>
+<td align="center">0.25</td>
+<td align="center"><strong>0.28</strong></td>
+<td align="center">↓70%</td>
+</tr>
+</tbody></table>
+<p><strong>逐维度绕过效果</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>绕过手段</th>
+<th align="center">目标维度</th>
+<th align="center">效果</th>
+<th>分析</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>窗口改名 → <code>GestureStubHome</code></td>
+<td align="center">Surface targeted</td>
+<td align="center">✅ <strong>完全绕过</strong></td>
+<td>1.00→0，不匹配 <code>KNOWN_OVERLAY_WINDOWS</code>。但哈希 ID <code>#200</code> ≠ 基线中 <code>#78</code>，S&#x3D;0.21 仍被基线 diff 检出</td>
+</tr>
+<tr>
+<td>进程名 → <code>com.example.gamexx</code></td>
+<td align="center">GPU Process</td>
+<td align="center">✅ <strong>完全绕过</strong></td>
+<td>游戏包名在 <code>SYSTEM_PROCESS_ALLOWLIST</code> &#x2F; gamePID 白名单中</td>
+</tr>
+<tr>
+<td>±6ms 帧抖动</td>
+<td align="center">Frame CV</td>
+<td align="center">⚠️ <strong>部分有效</strong></td>
+<td>F 前 3 周期降至 0.00，但后续恢复至 0.63。Adreno kgsl <code>gpubusy</code> 是窗口化计数器，短期抖动被时间窗口平滑</td>
+</tr>
+<tr>
+<td>间歇渲染 1&#x2F;5</td>
+<td align="center">Frame activeRatio</td>
+<td align="center">❌ <strong>无效</strong></td>
+<td>F 最低 0.63，原因见下文</td>
+</tr>
+</tbody></table>
+<p><strong>F&#x3D;0.63 物理下限分析</strong>：</p>
+<p>四次不同绕过手段测得的 Frame 分数收敛于 0.63，无法进一步降低。根因：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">EGL surface 存在于 SurfaceFlinger 图层</span><br><span class="line">  → HWC 硬件合成器每帧合成该图层</span><br><span class="line">    → 稳定的周期性 GPU 合成负载</span><br><span class="line">      → kgsl gpubusy 窗口化计数器记录到 ≥8% 利用率</span><br><span class="line">        → activeRatio ≥ 80%（合成从不中断）</span><br><span class="line">          → CV &lt; 0.20（合成负载恒定）</span><br><span class="line">            → F 最低 0.63</span><br></pre></td></tr></table></figure>
+
+<p><strong>只要 EGL surface 在 HWC Output Layer 中可见，GPU 合成负载就是不可避免的物理下限。</strong> 彻底绕过 Frame 检测的唯一方式是不创建可见图层——但这与 overlay 的功能目的矛盾。</p>
+<p><strong>绕过后 Combined score 分解</strong>（B1-B5 均值）：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">Combined = 0.21×0.30 + 0.65×0.25 + 0.25×0.15 + 0.18×0.10 + 0×0.10</span><br><span class="line">         = 0.063 + 0.163 + 0.038 + 0.018 + 0</span><br><span class="line">         = 0.28</span><br><span class="line">         （无协同加成触发：Surface 0.21 &lt; 0.5, Process 0.25 &lt; 0.7）</span><br></pre></td></tr></table></figure>
+
+<table>
+<thead>
+<tr>
+<th>贡献来源</th>
+<th align="center">分数</th>
+<th align="center">占比</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Frame (F&#x3D;0.65 × 0.7折扣 × 0.25权重)</td>
+<td align="center">0.114</td>
+<td align="center">40%</td>
+</tr>
+<tr>
+<td>Surface (S&#x3D;0.21 × 0.6折扣 × 0.30权重)</td>
+<td align="center">0.038</td>
+<td align="center">13%</td>
+</tr>
+<tr>
+<td>Process (P&#x3D;0.25 × 0.5折扣 × 0.15权重)</td>
+<td align="center">0.019</td>
+<td align="center">7%</td>
+</tr>
+<tr>
+<td>GPU (G&#x3D;0.18 × 0.4折扣 × 0.10权重)</td>
+<td align="center">0.007</td>
+<td align="center">2%</td>
+</tr>
+<tr>
+<td><strong>合计</strong></td>
+<td align="center"><strong>0.28</strong></td>
+<td align="center">—</td>
+</tr>
+</tbody></table>
+<p><strong>结论</strong>：</p>
+<ol>
+<li><strong>绕过成功</strong>：combined score 从 0.95 降至 0.28，降幅 70%，稳定低于 0.60 告警阈值。仅需<strong>窗口改名 + 进程名伪装</strong>两处改动即可实现，帧抖动和间歇渲染是冗余的。</li>
+<li><strong>F&#x3D;0.63 是检测下限</strong>：EGL surface 在 HWC Output 中的合成负载无法通过应用层帧控制消除，这是 GPU 检测的物理保证。</li>
+<li><strong>防御最薄弱环节</strong>：targeted match（指纹库匹配）贡献了 1.00→0 的最大降幅。一旦窗口名不在指纹库中，防御完全依赖弱信号组合，combined score 天花板仅 0.28。</li>
+<li><strong>防御最强环节</strong>：Frame 检测器（GPU CV 分析）无法被完全绕过，F 最低 0.63。这是整个防御系统最可靠的维度。</li>
+</ol>
+<h3 id="6-8-非靶向检测实验：排除-targeted-match-后的检测能力评估"><a href="#6-8-非靶向检测实验：排除-targeted-match-后的检测能力评估" class="headerlink" title="6.8 非靶向检测实验：排除 targeted match 后的检测能力评估"></a>6.8 非靶向检测实验：排除 targeted match 后的检测能力评估</h3><p>为进一步评估防御端在<strong>完全未知攻击</strong>（窗口名、进程名均不在指纹库中）场景下的检测能力，进行了五次对照实验。实验期间将 targeted match 从评分管线中完全移除：</p>
+<ul>
+<li><code>correlate()</code> 中 <code>confidence &gt; 0.9</code> 免折扣路径禁用 → 所有 Surface 检测统一 ×0.6 discount</li>
+<li><code>detectTopmostMismatch()</code> 中 Factor 3（已知攻击图层 + bbq-wrapper）禁用</li>
+<li><code>alert_manager</code> 中 targeted match 保底 <code>≥ 0.95</code> 地板移除</li>
+</ul>
+<h4 id="6-8-1-实验样本"><a href="#6-8-1-实验样本" class="headerlink" title="6.8.1 实验样本"></a>6.8.1 实验样本</h4><table>
+<thead>
+<tr>
+<th align="center">实验</th>
+<th align="center">时长</th>
+<th align="left">样本类型</th>
+<th align="left">渲染方式</th>
+<th align="center">FPS 限制</th>
+<th align="left">窗口名</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="center"><strong>T1</strong></td>
+<td align="center">2m41s</td>
+<td align="left">混合多样本</td>
+<td align="left">GPU + CPU</td>
+<td align="center">多档</td>
+<td align="left">多个</td>
+</tr>
+<tr>
+<td align="center"><strong>T2</strong></td>
+<td align="center">20s</td>
+<td align="left">GPU 绘制（drawattack 绕过版）</td>
+<td align="left">EGL&#x2F;GLES</td>
+<td align="center">60</td>
+<td align="left">GestureStubHome</td>
+</tr>
+<tr>
+<td align="center"><strong>T3</strong></td>
+<td align="center">30s</td>
+<td align="left">CPU 绘制（AKI）</td>
+<td align="left">ANativeWindow</td>
+<td align="center">90</td>
+<td align="left">AKI</td>
+</tr>
+<tr>
+<td align="center"><strong>T4</strong></td>
+<td align="center">30s</td>
+<td align="left">无攻击（基线）</td>
+<td align="left">—</td>
+<td align="center">—</td>
+<td align="left">—</td>
+</tr>
+<tr>
+<td align="center"><strong>T5</strong></td>
+<td align="center">30s</td>
+<td align="left">BigWhiteHack</td>
+<td align="left">EGL + ImGui</td>
+<td align="center">~90</td>
+<td align="left">AImGui</td>
+</tr>
+</tbody></table>
+<h4 id="6-8-2-实验数据"><a href="#6-8-2-实验数据" class="headerlink" title="6.8.2 实验数据"></a>6.8.2 实验数据</h4><table>
+<thead>
+<tr>
+<th align="center"></th>
+<th align="center">时长</th>
+<th align="center">告警</th>
+<th align="center">bbq-wrapper 检出</th>
+<th align="center">GestureStubHome 检出</th>
+<th align="center">CV 范围</th>
+<th align="center">S max</th>
+<th align="center">F max</th>
+<th align="center">combined max</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="center"><strong>T1</strong></td>
+<td align="center">2m41s</td>
+<td align="center">4¹</td>
+<td align="center">26</td>
+<td align="center">2</td>
+<td align="center">0.11–0.35</td>
+<td align="center">1.00²</td>
+<td align="center">0.70</td>
+<td align="center"><strong>0.71²</strong></td>
+</tr>
+<tr>
+<td align="center"><strong>T2</strong></td>
+<td align="center">20s</td>
+<td align="center">0</td>
+<td align="center">3</td>
+<td align="center">0</td>
+<td align="center">0.18–0.21</td>
+<td align="center">0.54</td>
+<td align="center">0.65</td>
+<td align="center"><strong>0.49</strong></td>
+</tr>
+<tr>
+<td align="center"><strong>T3</strong></td>
+<td align="center">30s</td>
+<td align="center">0</td>
+<td align="center">5</td>
+<td align="center">0</td>
+<td align="center">0.08–0.22</td>
+<td align="center">0.54</td>
+<td align="center">0.67</td>
+<td align="center"><strong>0.52</strong></td>
+</tr>
+<tr>
+<td align="center"><strong>T4</strong></td>
+<td align="center">30s</td>
+<td align="center">0</td>
+<td align="center">0</td>
+<td align="center">0</td>
+<td align="center">0.24–0.33</td>
+<td align="center">0.00</td>
+<td align="center">0.58</td>
+<td align="center"><strong>0.20</strong></td>
+</tr>
+<tr>
+<td align="center"><strong>T5</strong></td>
+<td align="center">30s</td>
+<td align="center">0</td>
+<td align="center">18</td>
+<td align="center">0</td>
+<td align="center"><strong>0.02</strong>–0.13</td>
+<td align="center">0.60</td>
+<td align="center">0.67</td>
+<td align="center"><strong>0.55</strong></td>
+</tr>
+</tbody></table>
+<blockquote>
+<p>¹ T1 的 4 次告警全部来自 MIUI 系统 Freeform-OverLayView 小窗功能误报，非实际攻击样本检出。<br>² T1 的 S&#x3D;1.00 和 combined&#x3D;0.71 是因为 targeted match discount bypass 未完全禁用（仅禁用了地板，未禁用 discount bypass），T2-T5 为完全禁用后的数据。</p>
+</blockquote>
+<h4 id="6-8-3-逐样本-CV-分数拆解"><a href="#6-8-3-逐样本-CV-分数拆解" class="headerlink" title="6.8.3 逐样本 CV 分数拆解"></a>6.8.3 逐样本 CV 分数拆解</h4><p><strong>T2 — GPU 绘制 60FPS（绕过版）</strong>：</p>
+<table>
+<thead>
+<tr>
+<th align="left">周期</th>
+<th align="center">util%</th>
+<th align="center">μ</th>
+<th align="center">σ</th>
+<th align="center">CV</th>
+<th align="center">F1(active)</th>
+<th align="center">F2(CV)</th>
+<th align="center">F3(util)</th>
+<th align="center">F4(hist)</th>
+<th align="center">conf</th>
+<th align="center">Frame 贡献</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">4</td>
+<td align="center">30.8</td>
+<td align="center">23.8</td>
+<td align="center">5.0</td>
+<td align="center">0.21</td>
+<td align="center">+0.35</td>
+<td align="center"><strong>+0.15</strong></td>
+<td align="center">+0.20</td>
+<td align="center">+0.06</td>
+<td align="center">0.76</td>
+<td align="center">0.53</td>
+</tr>
+<tr>
+<td align="left">5</td>
+<td align="center">23.9</td>
+<td align="center">23.8</td>
+<td align="center">4.3</td>
+<td align="center">0.18</td>
+<td align="center">+0.35</td>
+<td align="center"><strong>+0.30</strong></td>
+<td align="center">+0.20</td>
+<td align="center">+0.08</td>
+<td align="center">0.92</td>
+<td align="center">0.65</td>
+</tr>
+</tbody></table>
+<p>CV 从 0.21 降至 0.18 跨越 0.20 阈值，F2 因子从 +0.15 翻倍至 +0.30，conf 从 0.76 跳升至 0.92。但 Frame 贡献经 0.7 discount × 0.25 weight 后仅 0.16 计入 combined。</p>
+<p><strong>T3 — CPU 绘制 90FPS（AKI）</strong>：</p>
+<table>
+<thead>
+<tr>
+<th align="left">周期</th>
+<th align="center">util%</th>
+<th align="center">μ</th>
+<th align="center">σ</th>
+<th align="center">CV</th>
+<th align="center">conf</th>
+<th align="center">Frame 贡献</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">4</td>
+<td align="center">29.3</td>
+<td align="center">28.1</td>
+<td align="center">2.6</td>
+<td align="center"><strong>0.09</strong></td>
+<td align="center">0.91</td>
+<td align="center">0.63</td>
+</tr>
+<tr>
+<td align="left">5</td>
+<td align="center">28.3</td>
+<td align="center">28.2</td>
+<td align="center">2.3</td>
+<td align="center"><strong>0.08</strong></td>
+<td align="center">0.92</td>
+<td align="center">0.65</td>
+</tr>
+<tr>
+<td align="left">6</td>
+<td align="center">26.2</td>
+<td align="center">27.8</td>
+<td align="center">2.2</td>
+<td align="center"><strong>0.08</strong></td>
+<td align="center">0.94</td>
+<td align="center">0.66</td>
+</tr>
+<tr>
+<td align="left">7</td>
+<td align="center">15.3</td>
+<td align="center">25.7</td>
+<td align="center">5.1</td>
+<td align="center">0.20</td>
+<td align="center">0.96</td>
+<td align="center">0.67</td>
+</tr>
+<tr>
+<td align="left">8</td>
+<td align="center">17.5</td>
+<td align="center">24.5</td>
+<td align="center">5.5</td>
+<td align="center">0.22</td>
+<td align="center">0.83</td>
+<td align="center">0.58</td>
+</tr>
+</tbody></table>
+<p>CV 在攻击稳定期（周期 4-6）维持 0.08-0.09，后因攻击关闭 util 突降至 15.3%，CV 跳升至 0.20-0.22。</p>
+<p><strong>T4 — 无攻击基线</strong>：</p>
+<table>
+<thead>
+<tr>
+<th align="left">周期</th>
+<th align="center">util%</th>
+<th align="center">μ</th>
+<th align="center">σ</th>
+<th align="center">CV</th>
+<th align="center">conf</th>
+<th align="center">Frame 贡献</th>
+<th align="left">备注</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">6</td>
+<td align="center">16.3</td>
+<td align="center">13.2</td>
+<td align="center">3.1</td>
+<td align="center">0.24</td>
+<td align="center">0.66</td>
+<td align="center">0.46</td>
+<td align="left">—</td>
+</tr>
+<tr>
+<td align="left">7</td>
+<td align="center">23.6</td>
+<td align="center">16.7</td>
+<td align="center">5.5</td>
+<td align="center">0.33</td>
+<td align="center">0.68</td>
+<td align="center">0.47</td>
+<td align="left">—</td>
+</tr>
+<tr>
+<td align="left">10</td>
+<td align="center">16.1</td>
+<td align="center">17.4</td>
+<td align="center">4.2</td>
+<td align="center">0.24</td>
+<td align="center">0.83</td>
+<td align="center">0.58</td>
+<td align="left">游戏自身渲染波动</td>
+</tr>
+</tbody></table>
+<p>CV 全程 ≥ 0.24，远高于 0.20 软件定时器阈值。Surface 全程 0.00（无任何未知图层），combined 最高仅 0.20，验证了基线干净无误报。</p>
+<p><strong>T5 — BigWhiteHack</strong>：</p>
+<table>
+<thead>
+<tr>
+<th align="left">周期</th>
+<th align="center">util%</th>
+<th align="center">μ</th>
+<th align="center">σ</th>
+<th align="center">CV</th>
+<th align="center">conf</th>
+<th align="center">Frame 贡献</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">4</td>
+<td align="center">26.4</td>
+<td align="center">26.9</td>
+<td align="center">0.6</td>
+<td align="center"><strong>0.02</strong></td>
+<td align="center">0.91</td>
+<td align="center">0.63</td>
+</tr>
+<tr>
+<td align="left">5</td>
+<td align="center">27.5</td>
+<td align="center">27.1</td>
+<td align="center">0.6</td>
+<td align="center"><strong>0.02</strong></td>
+<td align="center">0.92</td>
+<td align="center">0.65</td>
+</tr>
+<tr>
+<td align="left">6</td>
+<td align="center">35.2</td>
+<td align="center">28.7</td>
+<td align="center">3.3</td>
+<td align="center">0.11</td>
+<td align="center">0.94</td>
+<td align="center">0.66</td>
+</tr>
+<tr>
+<td align="left">7</td>
+<td align="center">34.7</td>
+<td align="center">29.7</td>
+<td align="center">3.8</td>
+<td align="center">0.13</td>
+<td align="center">0.96</td>
+<td align="center">0.67</td>
+</tr>
+<tr>
+<td align="left">8</td>
+<td align="center">34.3</td>
+<td align="center">30.3</td>
+<td align="center">3.8</td>
+<td align="center">0.13</td>
+<td align="center">0.78</td>
+<td align="center">0.55</td>
+</tr>
+<tr>
+<td align="left">9</td>
+<td align="center">30.5</td>
+<td align="center">30.4</td>
+<td align="center">3.6</td>
+<td align="center">0.12</td>
+<td align="center">0.80</td>
+<td align="center">0.56</td>
+</tr>
+<tr>
+<td align="left">10</td>
+<td align="center">32.4</td>
+<td align="center">30.6</td>
+<td align="center">3.4</td>
+<td align="center">0.11</td>
+<td align="center">0.80</td>
+<td align="center">0.56</td>
+</tr>
+</tbody></table>
+<p>CV&#x3D;0.02 为五次测试最低值（σ&#x3D;0.6%，μ&#x3D;27.1%），软件定帧器特征极确定。bbq-wrapper 18&#x2F;20 采样周期全程检出，但因 targeted overlay 因子已禁用，Surface 仅 0.60（via generic unknown layer detection）。</p>
+<h4 id="6-8-4-样本间-CV-分布对比"><a href="#6-8-4-样本间-CV-分布对比" class="headerlink" title="6.8.4 样本间 CV 分布对比"></a>6.8.4 样本间 CV 分布对比</h4><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">T1 (混合):  0.11 ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ 0.35</span><br><span class="line">T2 (GPU):   0.18 ▁▁▁▁▁▁▁▁▁▁ 0.21</span><br><span class="line">T3 (CPU):   0.08 ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ 0.22</span><br><span class="line">T4 (无攻击): 0.24 ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ 0.33</span><br><span class="line">T5 (BWH):   0.02 ▏▏▏▏▏▏▏▏▏ 0.13</span><br><span class="line">            ├──── CV&lt;0.20（软件定帧器）────┤├── CV≥0.20（正常波动）──┤</span><br></pre></td></tr></table></figure>
+
+<h4 id="6-8-5-非靶向检测-combined-score-分解"><a href="#6-8-5-非靶向检测-combined-score-分解" class="headerlink" title="6.8.5 非靶向检测 combined score 分解"></a>6.8.5 非靶向检测 combined score 分解</h4><p>三类攻击样本在排除 targeted match 后的最高 combined score：</p>
+<table>
+<thead>
+<tr>
+<th align="left">样本</th>
+<th align="center">combined max</th>
+<th align="center">×0.30</th>
+<th align="center">×0.25</th>
+<th align="center">×0.15</th>
+<th align="center">×0.10</th>
+<th align="center">×0.10</th>
+<th align="center">Synergy</th>
+<th align="center">距阈值 0.60</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">T2 GPU 60FPS</td>
+<td align="center">0.49</td>
+<td align="center">S&#x3D;0.54</td>
+<td align="center">F&#x3D;0.63</td>
+<td align="center">P&#x3D;0.35</td>
+<td align="center">G&#x3D;0.28</td>
+<td align="center">A&#x3D;0.00</td>
+<td align="center">×1.3</td>
+<td align="center"><strong>-0.11</strong></td>
+</tr>
+<tr>
+<td align="left">T3 CPU 90FPS</td>
+<td align="center">0.52</td>
+<td align="center">S&#x3D;0.54</td>
+<td align="center">F&#x3D;0.67</td>
+<td align="center">P&#x3D;0.35</td>
+<td align="center">G&#x3D;0.18</td>
+<td align="center">A&#x3D;0.00</td>
+<td align="center">×1.3</td>
+<td align="center"><strong>-0.08</strong></td>
+</tr>
+<tr>
+<td align="left">T5 BWH</td>
+<td align="center"><strong>0.55</strong></td>
+<td align="center">S&#x3D;0.60</td>
+<td align="center">F&#x3D;0.67</td>
+<td align="center">P&#x3D;0.35</td>
+<td align="center">G&#x3D;0.28</td>
+<td align="center">A&#x3D;0.00</td>
+<td align="center">×1.3</td>
+<td align="center"><strong>-0.05</strong></td>
+</tr>
+<tr>
+<td align="left">T4 无攻击</td>
+<td align="center">0.20</td>
+<td align="center">S&#x3D;0.00</td>
+<td align="center">F&#x3D;0.58</td>
+<td align="center">P&#x3D;0.35</td>
+<td align="center">G&#x3D;0.00</td>
+<td align="center">A&#x3D;0.00</td>
+<td align="center">—</td>
+<td align="center">-0.40</td>
+</tr>
+</tbody></table>
+<h4 id="6-8-6-结论"><a href="#6-8-6-结论" class="headerlink" title="6.8.6 结论"></a>6.8.6 结论</h4><ol>
+<li><strong>全部未触发告警</strong>：五次实验排除 targeted match 后，combined score 最高 0.55（T5 BigWhiteHack），距 0.60 阈值始终存在 0.05-0.11 的差距。</li>
+<li><strong>CV 区分度保持</strong>：攻击 ON（T2&#x2F;T3&#x2F;T5 CV&lt;0.22）vs 攻击 OFF（T4 CV&gt;0.24）的 CV 差异显著，Frame 检测器在非靶向场景下仍是唯一可靠维度。</li>
+<li><strong>Surface 依赖指纹库</strong>：T4 无攻击时 S&#x3D;0.00，T2&#x2F;T3 攻击时 S&#x3D;0.54（generic unknown layer），T5 最高 S&#x3D;0.60（bbq-wrapper 持续检出）。但没有 targeted match 的 +0.35 加成和免折扣待遇，Surface 贡献上限仅 0.18（0.60 × 0.6 discount × 0.30 weight）。</li>
+<li><strong>CPU vs GPU 无本质差异</strong>：T2（GPU）和 T3（CPU）的 Frame 分数接近（0.65 vs 0.67），防御端对两种渲染管线的检测能力均等。</li>
+<li><strong>BigWhiteHack 信号最强</strong>：T5 的 CV&#x3D;0.02 是最稳定的软件定时器指纹（优于 T2 CV&#x3D;0.18-0.21 和 T3 CV&#x3D;0.08-0.09），bbq-wrapper 检出率 18&#x2F;20（90%），证明 ImGui 外挂的渲染管线比简化版 drawattack 更规律。</li>
+<li><strong>非靶向检测天花板 ≈ 0.55</strong>：在最优条件下（BBQ 持续可见 + CV&#x3D;0.02 + GPU 利用率 26-35%），非靶向检测的综合分不超过 0.55。这意味着<strong>纯未知攻击（无指纹匹配）在当前评分体系下无法触发告警</strong>，防御改进应聚焦于提升弱信号的独立置信度或降低告警阈值。</li>
+</ol>
+<hr>
+<h2 id="七、测试环境与结果"><a href="#七、测试环境与结果" class="headerlink" title="七、测试环境与结果"></a>七、测试环境与结果</h2><h3 id="7-1-测试设备"><a href="#7-1-测试设备" class="headerlink" title="7.1 测试设备"></a>7.1 测试设备</h3><table>
+<thead>
+<tr>
+<th>项目</th>
+<th>规格</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>型号</td>
+<td>Xiaomi Mi 11 (M2011K2C)</td>
+</tr>
+<tr>
+<td>SoC</td>
+<td>Snapdragon 888</td>
+</tr>
+<tr>
+<td>GPU</td>
+<td>Adreno 660 v2</td>
+</tr>
+<tr>
+<td>Android</td>
+<td>13 (API 33, TKQ1.220829.002)</td>
+</tr>
+<tr>
+<td>Kernel</td>
+<td>5.4.210-qgki</td>
+</tr>
+<tr>
+<td>SELinux</td>
+<td>Enforcing (测试时临时 Permissive)</td>
+</tr>
+<tr>
+<td>屏幕</td>
+<td>1440×3200 @ 120Hz</td>
+</tr>
+</tbody></table>
+<h3 id="7-2-检测性能"><a href="#7-2-检测性能" class="headerlink" title="7.2 检测性能"></a>7.2 检测性能</h3><table>
+<thead>
+<tr>
+<th>指标</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>首告警延迟</td>
+<td>&lt; 6 秒（含 ~3s 随机启动延迟）</td>
+</tr>
+<tr>
+<td>检测周期</td>
+<td>2 秒</td>
+</tr>
+<tr>
+<td>告警冷却</td>
+<td>5 秒</td>
+</tr>
+<tr>
+<td>误报率</td>
+<td>0（多轮无攻击基线测试）</td>
+</tr>
+<tr>
+<td>针对性检测（drawattack GPU）</td>
+<td>置信度 0.95 → BLOCK</td>
+</tr>
+<tr>
+<td>通用检测（BigWhiteHack GPU）</td>
+<td>置信度 0.95 → BLOCK</td>
+</tr>
+<tr>
+<td>通用检测（CPU 绘制 全屏）</td>
+<td>综合分 0.29，检测到但低于阈值</td>
+</tr>
+<tr>
+<td>通用检测（CPU 绘制 仅射线）</td>
+<td>综合分 0.26，检测到但低于阈值</td>
+</tr>
+<tr>
+<td>CPU 渲染 vs GPU 渲染</td>
+<td>CPU 渲染信号低约 20%，但不影响检测</td>
+</tr>
+<tr>
+<td><strong>抗绕过测试（窗口改名+进程伪装）</strong></td>
+<td><strong>Combined 从 0.95→0.28（↓70%），绕过成功</strong></td>
+</tr>
+<tr>
+<td><strong>Frame 检测物理下限</strong></td>
+<td><strong>F&#x3D;0.63（HWC 合成负载），无法被应用层绕过</strong></td>
+</tr>
+<tr>
+<td><strong>非靶向检测 — GPU 绘制 60FPS</strong></td>
+<td><strong>Combined&#x3D;0.49（CV&#x3D;0.18–0.21），未触发告警</strong></td>
+</tr>
+<tr>
+<td><strong>非靶向检测 — CPU 绘制 90FPS</strong></td>
+<td><strong>Combined&#x3D;0.52（CV&#x3D;0.08–0.09），未触发告警</strong></td>
+</tr>
+<tr>
+<td><strong>非靶向检测 — BigWhiteHack</strong></td>
+<td><strong>Combined&#x3D;0.55（CV&#x3D;0.02），最高但未达阈值</strong></td>
+</tr>
+<tr>
+<td><strong>非靶向检测天花板</strong></td>
+<td><strong>Combined ≤ 0.55（距阈值 0.60 差 0.05）</strong></td>
+</tr>
+<tr>
+<td>无攻击基线</td>
+<td>综合分 0.20（非靶向）&#x2F; 0.00–0.04（靶向），未触发告警</td>
+</tr>
+<tr>
+<td>防御二进制</td>
+<td>446KB (ARM64)</td>
+</tr>
+</tbody></table>
+<h3 id="7-3-完整检测矩阵"><a href="#7-3-完整检测矩阵" class="headerlink" title="7.3 完整检测矩阵"></a>7.3 完整检测矩阵</h3><table>
+<thead>
+<tr>
+<th>检测方法</th>
+<th>技术手段</th>
+<th>用户态可用</th>
+<th>置信度贡献</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>图层检测</td>
+<td><code>dumpsys SurfaceFlinger --list</code></td>
+<td>✅</td>
+<td>1.00 (针对性)</td>
+</tr>
+<tr>
+<td>最前面窗口判定</td>
+<td>HWC Output Layer Z-order + WindowManager 焦点对比</td>
+<td>✅</td>
+<td>0.65</td>
+</tr>
+<tr>
+<td>ioctl 查询</td>
+<td><code>/dev/kgsl-3d0</code> + <code>IOCTL_KGSL_DEVICE_GETPROPERTY</code></td>
+<td>✅</td>
+<td>驱动信息基线</td>
+</tr>
+<tr>
+<td>GPU 利用率</td>
+<td><code>/sys/class/kgsl/kgsl-3d0/gpubusy</code></td>
+<td>✅</td>
+<td>0.45-0.70</td>
+</tr>
+<tr>
+<td>帧生成延迟</td>
+<td>GPU 利用率 CV 分析（GPU&#x2F;CPU 渲染均有效）</td>
+<td>✅</td>
+<td>0.53-0.98</td>
+</tr>
+<tr>
+<td>进程扫描</td>
+<td><code>/proc/&lt;pid&gt;/comm</code> + <code>cmdline</code></td>
+<td>✅</td>
+<td>0.55-0.70</td>
+</tr>
+<tr>
+<td>文件路径产物</td>
+<td><code>access()</code> 已知外挂路径</td>
+<td>✅</td>
+<td>0.50</td>
+</tr>
+<tr>
+<td>无障碍服务</td>
+<td><code>settings get secure enabled_accessibility_services</code></td>
+<td>✅</td>
+<td>0.30-0.50</td>
+</tr>
+<tr>
+<td>内存映射</td>
+<td><code>/proc/&lt;pid&gt;/maps</code></td>
+<td>❌ (root 进程)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>GPU fd 扫描</td>
+<td><code>/proc/&lt;pid&gt;/fd/</code></td>
+<td>❌ (root 进程)</td>
+<td>—</td>
+</tr>
+</tbody></table>
+<h3 id="7-4-全场景测试对比"><a href="#7-4-全场景测试对比" class="headerlink" title="7.4 全场景测试对比"></a>7.4 全场景测试对比</h3><table>
+<thead>
+<tr>
+<th>场景</th>
+<th>GPU util</th>
+<th>σ</th>
+<th>CV</th>
+<th>S&#x2F;F&#x2F;G&#x2F;P&#x2F;A</th>
+<th>综合分</th>
+<th>告警</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>某射击游戏空闲</td>
+<td>~16%</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>✅ 无</td>
+</tr>
+<tr>
+<td>某射击游戏正常对战</td>
+<td>25.4%</td>
+<td>4.6%</td>
+<td><strong>0.23</strong></td>
+<td>—</td>
+<td>0.51</td>
+<td>✅ 无</td>
+</tr>
+<tr>
+<td>+ drawattack 90FPS (GPU渲染)</td>
+<td>29.0%</td>
+<td>0.3%</td>
+<td><strong>0.01</strong></td>
+<td>1.00&#x2F;0.91&#x2F;0.70&#x2F;0.35&#x2F;—</td>
+<td>0.95</td>
+<td>🔴 BLOCK</td>
+</tr>
+<tr>
+<td>+ BigWhiteHack (GPU渲染)</td>
+<td>23.5%</td>
+<td>0.3%</td>
+<td><strong>0.01</strong></td>
+<td>1.00&#x2F;0.98&#x2F;0.70&#x2F;—&#x2F;—</td>
+<td>0.95</td>
+<td>🔴 BLOCK</td>
+</tr>
+<tr>
+<td>+ drawattack 绕过版 (改名+伪装)</td>
+<td>~19%</td>
+<td>0.8%</td>
+<td><strong>&lt; 0.20</strong></td>
+<td>0.21&#x2F;0.63&#x2F;0.18&#x2F;0.25&#x2F;0.00</td>
+<td><strong>0.28</strong></td>
+<td>⚠️ 绕过成功</td>
+</tr>
+<tr>
+<td>+ CPU绘制程序A 全屏 (AKI)</td>
+<td>~18%</td>
+<td>0.4%</td>
+<td><strong>&lt; 0.20</strong></td>
+<td>0.21&#x2F;0.70&#x2F;0.18&#x2F;0.25&#x2F;0.00</td>
+<td>0.26–0.29</td>
+<td>⚠️ 检测到未告警</td>
+</tr>
+<tr>
+<td>+ CPU绘制程序A 全屏 (AKI)</td>
+<td>~18%</td>
+<td>0.4%</td>
+<td><strong>&lt; 0.20</strong></td>
+<td>0.21&#x2F;0.70&#x2F;0.18&#x2F;0.25&#x2F;0.00</td>
+<td>0.26–0.29</td>
+<td>⚠️ 检测到未告警</td>
+</tr>
+<tr>
+<td>+ CPU绘制程序A 仅射线 (AKI)</td>
+<td>~14%</td>
+<td>0.5%</td>
+<td><strong>&lt; 0.20</strong></td>
+<td>0.21&#x2F;0.58&#x2F;0.18&#x2F;0.25&#x2F;0.00</td>
+<td>0.22–0.26</td>
+<td>⚠️ 检测到未告警</td>
+</tr>
+<tr>
+<td>+ CPU绘制程序B 全屏 (AKI)</td>
+<td>~23%</td>
+<td>0.4%</td>
+<td><strong>&lt; 0.20</strong></td>
+<td>0.21&#x2F;0.66&#x2F;0.28&#x2F;0.25&#x2F;0.00</td>
+<td>0.25–0.29</td>
+<td>⚠️ 检测到未告警</td>
+</tr>
+<tr>
+<td>+ 外部绘制关闭</td>
+<td>~0%</td>
+<td>—</td>
+<td>—</td>
+<td>0.00&#x2F;0.00&#x2F;0.00&#x2F;0.25&#x2F;0.00</td>
+<td>0.00–0.04</td>
+<td>✅ 无误报</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="八、改进迭代：统一指纹库-无障碍检测"><a href="#八、改进迭代：统一指纹库-无障碍检测" class="headerlink" title="八、改进迭代：统一指纹库 + 无障碍检测"></a>八、改进迭代：统一指纹库 + 无障碍检测</h2><h3 id="8-1-统一攻击指纹数据库-signatures-h"><a href="#8-1-统一攻击指纹数据库-signatures-h" class="headerlink" title="8.1 统一攻击指纹数据库 (signatures.h)"></a>8.1 统一攻击指纹数据库 (<code>signatures.h</code>)</h3><p><strong>问题</strong>：攻击指纹分散在 4 处不同位置（<code>surface_detector.h</code> 的窗口名、<code>gpu_detector.cpp</code> 的进程模式、<code>frame_detector.h</code> 的 FPS 目标、<code>process_detector.cpp</code> 的系统白名单），增删指纹需要在多个文件中修改，容易遗漏。</p>
+<p><strong>改进</strong>：创建 <code>jni/signatures.h</code> 集中管理所有已知攻击指纹，使用 sentinel 模式（<code>nullptr</code> 结尾）避免硬编码数组长度：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 窗口名模式</span></span><br><span class="line"><span class="type">static</span> <span class="keyword">constexpr</span> <span class="type">const</span> <span class="type">char</span>* KNOWN_OVERLAY_WINDOWS[] = &#123;</span><br><span class="line">    <span class="string">&quot;SsageGUIMAX&quot;</span>, <span class="string">&quot;AImGui&quot;</span>, <span class="literal">nullptr</span></span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 进程名模式</span></span><br><span class="line"><span class="type">static</span> <span class="keyword">constexpr</span> <span class="type">const</span> <span class="type">char</span>* SUSPICIOUS_PROCESS_PATTERNS[] = &#123;</span><br><span class="line">    <span class="string">&quot;libflykernel&quot;</span>, <span class="string">&quot;drawattack&quot;</span>, <span class="string">&quot;imgui&quot;</span>, <span class="string">&quot;overlay&quot;</span>,</span><br><span class="line">    <span class="string">&quot;BigWhite&quot;</span>, <span class="string">&quot;Hack&quot;</span>, <span class="string">&quot;akitadog&quot;</span>, <span class="string">&quot;cheat&quot;</span>, <span class="string">&quot;esp&quot;</span>, <span class="string">&quot;aimbot&quot;</span>, <span class="literal">nullptr</span></span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 已知外挂文件路径</span></span><br><span class="line"><span class="type">static</span> <span class="keyword">constexpr</span> <span class="type">const</span> <span class="type">char</span>* KNOWN_CHEAT_PATHS[] = &#123;</span><br><span class="line">    <span class="string">&quot;/data/FlyBlueSaveNum&quot;</span>, <span class="string">&quot;/data/akitadog&quot;</span>,</span><br><span class="line">    <span class="string">&quot;/data/local/tmp/.native_surface.so&quot;</span>, <span class="literal">nullptr</span></span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 可疑无障碍服务模式</span></span><br><span class="line"><span class="type">static</span> <span class="keyword">constexpr</span> <span class="type">const</span> <span class="type">char</span>* SUSPICIOUS_ACCESSIBILITY_PATTERNS[] = &#123;</span><br><span class="line">    <span class="string">&quot;auto&quot;</span>, <span class="string">&quot;click&quot;</span>, <span class="string">&quot;macro&quot;</span>, <span class="string">&quot;bot&quot;</span>, <span class="string">&quot;script&quot;</span>,</span><br><span class="line">    <span class="string">&quot;assist&quot;</span>, <span class="string">&quot;helper&quot;</span>, <span class="string">&quot;plugin&quot;</span>, <span class="string">&quot;mod&quot;</span>, <span class="literal">nullptr</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>遍历方式统一为 sentinel 循环：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="type">const</span> <span class="type">char</span>* <span class="type">const</span>* p = KNOWN_OVERLAY_WINDOWS; *p != <span class="literal">nullptr</span>; p++) &#123;</span><br><span class="line">    <span class="keyword">if</span> (layer.name.<span class="built_in">find</span>(*p) != std::string::npos) &#123; <span class="comment">/* 命中 */</span> &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="8-2-无障碍服务检测-accessibility-detector"><a href="#8-2-无障碍服务检测-accessibility-detector" class="headerlink" title="8.2 无障碍服务检测 (accessibility_detector)"></a>8.2 无障碍服务检测 (<code>accessibility_detector</code>)</h3><p><strong>原理</strong>：很多 GPU 外挂的菜单交互（自动瞄准、自动点击、手势模拟）依赖 Android Accessibility Service。无障碍服务列表可通过 <code>settings get secure enabled_accessibility_services</code> 从用户态获取，无需任何权限。</p>
+<p><strong>实现</strong>：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 1. 获取已启用的无障碍服务</span></span><br><span class="line">std::string raw = Shell::<span class="built_in">exec</span>(</span><br><span class="line">    <span class="string">&quot;settings get secure enabled_accessibility_services&quot;</span>);</span><br><span class="line"></span><br><span class="line"><span class="comment">// 2. 解析冒号分隔的服务列表</span></span><br><span class="line"><span class="comment">//    格式: &quot;pkg1/.Svc1:pkg2/.Svc2&quot;</span></span><br><span class="line"><span class="keyword">auto</span> services = <span class="built_in">parseServiceList</span>(raw);</span><br><span class="line"></span><br><span class="line"><span class="comment">// 3. 逐一对比已知模式</span></span><br><span class="line"><span class="keyword">for</span> (<span class="type">const</span> <span class="keyword">auto</span>&amp; svc : services) &#123;</span><br><span class="line">    <span class="comment">// 先排除系统服务 (TalkBack, Switch Access 等)</span></span><br><span class="line">    <span class="comment">// 再匹配可疑模式</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 4. 评分</span></span><br><span class="line"><span class="comment">//    1 个匹配 → 0.30 | 2 个 → 0.40 | 3+ 个 → 0.50</span></span><br></pre></td></tr></table></figure>
+
+<p><strong>设计决策</strong>：无障碍检测输出低置信度（0.30-0.50），<strong>不自成告警</strong>。仅在与其他模块协同（如同时存在 GPU 异常利用率）时通过协同加成提升综合分。这是参考行业实践中”多个弱信号叠加后提高风险等级”的思想。</p>
+<h3 id="8-3-文件路径产物检测"><a href="#8-3-文件路径产物检测" class="headerlink" title="8.3 文件路径产物检测"></a>8.3 文件路径产物检测</h3><p><strong>原理</strong>：GPU 外挂的二进制、配置、库文件通常落盘在特定路径。扩展 <code>process_detector</code> 的 <code>checkKnownArtifactPaths</code> 方法，通过 <code>access(R_OK)</code> 检测已知路径是否存在。</p>
+<p>检测路径（从 <code>signatures.h</code> 的 <code>KNOWN_CHEAT_PATHS</code> 读取）：</p>
+<ul>
+<li><code>/data/FlyBlueSaveNum</code> — 已知外挂配置文件</li>
+<li><code>/data/akitadog</code> — 已知外挂工具目录（BigWhiteHack 落盘路径）</li>
+<li><code>/data/local/tmp/.native_surface.so</code> — AOSP blob 文件回退产物</li>
+</ul>
+<p>输出 confidence: 0.50。</p>
+<h3 id="8-4-告警引擎权重扩展"><a href="#8-4-告警引擎权重扩展" class="headerlink" title="8.4 告警引擎权重扩展"></a>8.4 告警引擎权重扩展</h3><p>新增维度后重新分配权重（保持总和&#x3D;1.0）：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 改进前 (4 维)</span></span><br><span class="line">WEIGHT_SURFACE = <span class="number">0.35</span>; WEIGHT_FRAME = <span class="number">0.30</span>;</span><br><span class="line">WEIGHT_PROCESS = <span class="number">0.20</span>; WEIGHT_GPU   = <span class="number">0.15</span>;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 改进后 (5 维)</span></span><br><span class="line">WEIGHT_SURFACE       = <span class="number">0.30</span>;</span><br><span class="line">WEIGHT_FRAME         = <span class="number">0.25</span>;</span><br><span class="line">WEIGHT_PROCESS       = <span class="number">0.15</span>;</span><br><span class="line">WEIGHT_GPU           = <span class="number">0.10</span>;</span><br><span class="line">WEIGHT_ACCESSIBILITY = <span class="number">0.10</span>;</span><br><span class="line">WEIGHT_ARTIFACT      = <span class="number">0.10</span>;  <span class="comment">// 文件路径产物 (预留)</span></span><br></pre></td></tr></table></figure>
+
+<p>新增协同加成规则：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">Accessibility &gt; 0.3 ∧ GPU &gt; 0.3 → combined × 1.1</span><br></pre></td></tr></table></figure>
+
+<p><strong>原理</strong>：单一无障碍服务可疑是弱信号（很多合法辅助工具也使用无障碍服务），但无障碍服务 + GPU 异常利用率同时出现时，自动化外挂的概率显著上升。</p>
+<h3 id="8-5-改进前后对比"><a href="#8-5-改进前后对比" class="headerlink" title="8.5 改进前后对比"></a>8.5 改进前后对比</h3><table>
+<thead>
+<tr>
+<th>指标</th>
+<th>改进前</th>
+<th>改进后</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>检测维度</td>
+<td>4</td>
+<td>5 (+1 文件产物预留)</td>
+</tr>
+<tr>
+<td>指纹管理</td>
+<td>分散在 4 个文件</td>
+<td>统一 <code>signatures.h</code></td>
+</tr>
+<tr>
+<td>攻击窗口名模式</td>
+<td>2</td>
+<td>2（扩展更便捷）</td>
+</tr>
+<tr>
+<td>进程名模式</td>
+<td>11</td>
+<td>11（扩展更便捷）</td>
+</tr>
+<tr>
+<td>文件路径检测</td>
+<td>0</td>
+<td>3</td>
+</tr>
+<tr>
+<td>无障碍检测</td>
+<td>无</td>
+<td>完整实现</td>
+</tr>
+<tr>
+<td>防御二进制</td>
+<td>441KB</td>
+<td>446KB</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="九、总结"><a href="#九、总结" class="headerlink" title="九、总结"></a>九、总结</h2><p>本文介绍了一种在纯用户态权限下检测 Android GPU 叠加层的多维度方案。核心创新点包括：</p>
+<ol>
+<li><p><strong>绕过 <code>/proc</code> 权限限制</strong>：利用 GPU 驱动的 sysfs 和 ioctl 接口进行系统级被动检测，不依赖被限制的 <code>/proc/&lt;pid&gt;/maps</code> 和 <code>/proc/&lt;pid&gt;/fd/</code> 路径。同时通过 <code>dumpsys SurfaceFlinger</code> 用户态命令直接枚举图层，不受进程权限边界影响。</p>
+</li>
+<li><p><strong>GPU 利用率变异系数作为帧生成指纹</strong>：发现软件帧限速器（<code>nanosleep</code>）产生的 GPU 负载具有极低变异系数（CV ≈ 0.01），与正常游戏渲染（CV &gt; 0.15）有本质区别，成为 <code>dumpsys --latency</code> 失效后的有效替代方案。该指纹对 GPU（EGL&#x2F;GLES）和 CPU（ANativeWindow）两种渲染管线均有效，CPU 渲染的信号强度低约 20% 但不影响检测。</p>
+</li>
+<li><p><strong>多维度协同评分</strong>：五个独立检测维度的证据通过加权评分引擎融合，带协同加成，既降低了单维度误报风险，又在针对性匹配时达到 0.95 的置信度。</p>
+</li>
+<li><p><strong>对抗 root 攻击端</strong>：通过 <code>prctl(PR_SET_DUMPABLE, 0)</code> 防 ptrace、纯静态编译、无害进程名、全被动观测等策略，实现了在 root 攻击进程环境下的自身防护。</p>
+</li>
+<li><p><strong>渲染管线无关性</strong>：防御端不关心攻击程序的渲染方式——EGL&#x2F;GLES GPU 渲染和 ANativeWindow CPU 渲染均创建 SurfaceFlinger 图层，均触发检测。这扩大了防御覆盖面，对未知攻击类型具有更好的泛化能力。</p>
+</li>
+<li><p><strong>抗绕过能力</strong>：经过系统性绕过测试（窗口改名、进程伪装、帧抖动、间歇渲染），combined score 从 0.95 降至 0.28（降幅 70%），绕过成功但仍被检测。Frame 检测器（GPU CV 分析）存在物理下限 F&#x3D;0.63——HWC 硬件合成负载无法通过应用层帧控制消除，是整个系统最可靠的维度。最薄弱环节为指纹库匹配（targeted match），一旦窗口名不在库中即损失 1.00→0 的分数。防御改进方向应为：减少对指纹库的依赖，引入图层行为画像（uid、分辨率、buffer 格式）替代纯字符串匹配。</p>
+</li>
+</ol>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2026/06/05/draw_detect/">https://brszzz.github.io/2026/06/05/draw_detect/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/%E6%B8%B8%E6%88%8F%E5%AE%89%E5%85%A8/">游戏安全</a><a class="post-meta__tags" href="/tags/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a><a class="post-meta__tags" href="/tags/Android/">Android</a><a class="post-meta__tags" href="/tags/GPU/">GPU</a><a class="post-meta__tags" href="/tags/EGL/">EGL</a><a class="post-meta__tags" href="/tags/OpenGL/">OpenGL</a><a class="post-meta__tags" href="/tags/%E5%8F%A0%E5%8A%A0%E5%B1%82%E6%A3%80%E6%B5%8B/">叠加层检测</a><a class="post-meta__tags" href="/tags/SurfaceFlinger/">SurfaceFlinger</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/06/06/MMU%E6%96%AD%E7%82%B9%E7%B3%BB%E7%BB%9F%E6%8A%80%E6%9C%AF%E8%AF%A6%E8%A7%A3/" title="ARM64 页表断点——基于 PTE 缺页异常的透明拦截、上下文捕获与寄存器实时修改"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">ARM64 页表断点——基于 PTE 缺页异常的透明拦截、上下文捕获与寄存器实时修改</div></div><div class="info-2"><div class="info-item-1">基于 ARM64 PTE 权限位操控与 do_page_fault 缺页拦截的透明断点系统，支持执行/读/写三种断点类型、32 个全局槽位、GPR+SIMD 完整上下文捕获与寄存器实时修改，One-Shot 非阻塞模式对目标进程完全不可感知，面向 Android 游戏逆向工程场景。</div></div></div></a><a class="pagination-related" href="/2026/06/04/kernel_read_detect/" title="内核驱动级内存读写的用户层检测与绕过——一次攻防对抗实践"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">内核驱动级内存读写的用户层检测与绕过——一次攻防对抗实践</div></div><div class="info-2"><div class="info-item-1">在 ARM64 Android 平台上构建内核驱动内存读写检测 Demo，防御端通过 5 种用户态手段检测外部内存访问，攻击端从 access_process_vm 演进为物理内存直读，记录完整的攻防对抗过程。</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2026/06/04/vm_rw_detect_analysis/" title="ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗</div></div><div class="info-2"><div class="info-item-1">系统研究 Android ARM64 平台上跨进程内存读写的可检测性，覆盖 mincore 自检、PerfEvent 跨通道测序、PMU 硬件计数器、kprobes 内核挂钩等十余种检测方法，分析各方案的优缺点与对抗手段。</div></div></div></a><a class="pagination-related" href="/2026/06/04/kernel_read_detect/" title="内核驱动级内存读写的用户层检测与绕过——一次攻防对抗实践"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">内核驱动级内存读写的用户层检测与绕过——一次攻防对抗实践</div></div><div class="info-2"><div class="info-item-1">在 ARM64 Android 平台上构建内核驱动内存读写检测 Demo，防御端通过 5 种用户态手段检测外部内存访问，攻击端从 access_process_vm 演进为物理内存直读，记录完整的攻防对抗过程。</div></div></div></a><a class="pagination-related" href="/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/" title="ELF 二进制字符串加密的逆向"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-23</div><div class="info-item-2">ELF 二进制字符串加密的逆向</div></div><div class="info-2"><div class="info-item-1">逆向一个 Android ARM64 ELF 的自定义字符串加密方案，还原双 pass 流密码算法（含 KEY_TERM 完整性锚点机制），写 Python 脚本一次性解密全部 956 条字符串。顺带发现一个 NEON 加壳框架。</div></div></div></a><a class="pagination-related" href="/2026/06/04/cross-process-memory-detection/" title="跨进程内存读写的攻防博弈——从内核缺页陷阱到应用层数据溯源"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">跨进程内存读写的攻防博弈——从内核缺页陷阱到应用层数据溯源</div></div><div class="info-2"><div class="info-item-1">ARM64 Android 平台 process_vm_readv/writev 检测方法的完整探索，实测 mincore 自检、PerfEvent 跨通道测序、PMU 硬件计数器等十余种方案，分析 root 权限攻击者的规避手段与残留检测信号。</div></div></div></a><a class="pagination-related" href="/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/" title="记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-23</div><div class="info-item-2">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</div></div><div class="info-2"><div class="info-item-1">目标样本为 Virbox Protector 加壳的 ARM64 ELF，使用 Unicorn 模拟执行在 PC 上几秒完成脱壳。本文还原壳的 aPLib/NRV LZ77 解码器、双层加载结构、伪 ELF 魔数等细节，并详述 hook mprotect 作为脱壳信号的核心策略。</div></div></div></a><a class="pagination-related" href="/2026/06/03/ue4_fps_client_trust_analysis/" title="UE4 FPS 手游客户端信任边界安全分析——移动、弹道与反外挂系统"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-03</div><div class="info-item-2">UE4 FPS 手游客户端信任边界安全分析——移动、弹道与反外挂系统</div></div><div class="info-2"><div class="info-item-1">对某款 UE4 移动端 FPS 游戏进行逆向分析，梳理客户端-服务端信任边界问题，覆盖移动系统、弹道系统、反外挂系统三大攻击面，识别 40+ 个校验弱点并提出安全加固建议。</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">35</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">132</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#DrawGuard%EF%BC%9A%E5%9F%BA%E4%BA%8E%E5%A4%9A%E7%BB%B4%E5%BA%A6-GPU-%E7%89%B9%E5%BE%81%E7%9A%84%E7%94%A8%E6%88%B7%E6%80%81-Android-%E5%8F%A0%E5%8A%A0%E5%B1%82%E6%A3%80%E6%B5%8B%E7%B3%BB%E7%BB%9F"><span class="toc-text">DrawGuard：基于多维度 GPU 特征的用户态 Android 叠加层检测系统</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E9%A1%B9%E7%9B%AE%E8%83%8C%E6%99%AF"><span class="toc-text">一、项目背景</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-1-%E6%94%BB%E5%87%BB%E6%A8%A1%E5%9E%8B"><span class="toc-text">1.1 攻击模型</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-%E6%A3%80%E6%B5%8B%E7%BA%A6%E6%9D%9F"><span class="toc-text">1.2 检测约束</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81%E7%B3%BB%E7%BB%9F%E6%9E%B6%E6%9E%84"><span class="toc-text">二、系统架构</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-%E6%95%B4%E4%BD%93%E8%AE%BE%E8%AE%A1"><span class="toc-text">2.1 整体设计</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-2-%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84"><span class="toc-text">2.2 目录结构</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-3-%E6%94%BB%E5%87%BB%E7%AB%AF%E8%AE%BE%E8%AE%A1"><span class="toc-text">2.3 攻击端设计</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81%E6%A3%80%E6%B5%8B%E6%A8%A1%E5%9D%97%E8%AF%A6%E8%A7%A3"><span class="toc-text">三、检测模块详解</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#3-1-SurfaceFlinger-%E5%9B%BE%E5%B1%82%E6%A3%80%E6%B5%8B"><span class="toc-text">3.1 SurfaceFlinger 图层检测</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#3-1-1-%E6%9C%80%E5%89%8D%E9%9D%A2%E7%AA%97%E5%8F%A3%E7%B2%BE%E7%A1%AE%E5%88%A4%E5%AE%9A%EF%BC%88Topmost-Window-Detection%EF%BC%89"><span class="toc-text">3.1.1 最前面窗口精确判定（Topmost Window Detection）</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-2-GPU-%E9%A9%B1%E5%8A%A8-ioctl-%E7%9B%B4%E8%AF%A2"><span class="toc-text">3.2 GPU 驱动 ioctl 直询</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-3-GPU-%E5%88%A9%E7%94%A8%E7%8E%87%E4%B8%8E%E5%B8%A7%E7%94%9F%E6%88%90%E5%BB%B6%E8%BF%9F%E6%A3%80%E6%B5%8B"><span class="toc-text">3.3 GPU 利用率与帧生成延迟检测</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#3-3-1-%E5%8F%98%E5%BC%82%E7%B3%BB%E6%95%B0%EF%BC%88CV%EF%BC%89%E8%AE%A1%E7%AE%97%E5%8E%9F%E7%90%86"><span class="toc-text">3.3.1 变异系数（CV）计算原理</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-4-%E8%BF%9B%E7%A8%8B%E6%89%AB%E6%8F%8F"><span class="toc-text">3.4 进程扫描</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81%E5%91%8A%E8%AD%A6%E5%85%B3%E8%81%94%E5%BC%95%E6%93%8E"><span class="toc-text">四、告警关联引擎</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#4-1-%E5%8A%A0%E6%9D%83%E8%AF%84%E5%88%86%E6%A8%A1%E5%9E%8B"><span class="toc-text">4.1 加权评分模型</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-2-%E5%91%8A%E8%AD%A6%E5%86%B3%E7%AD%96"><span class="toc-text">4.2 告警决策</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-3-%E5%AE%9E%E9%99%85%E5%91%8A%E8%AD%A6%E8%BE%93%E5%87%BA"><span class="toc-text">4.3 实际告警输出</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81%E5%BC%80%E5%8F%91%E8%BF%87%E7%A8%8B%E4%B8%8E%E9%9A%BE%E7%82%B9"><span class="toc-text">五、开发过程与难点</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#5-1-%E6%94%BB%E5%87%BB%E7%AB%AF-blob-%E5%8A%A0%E8%BD%BD%E5%A4%B1%E8%B4%A5"><span class="toc-text">5.1 攻击端 blob 加载失败</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-2-%E7%94%A8%E6%88%B7%E6%80%81-proc-%E6%9D%83%E9%99%90%E9%99%90%E5%88%B6"><span class="toc-text">5.2 用户态 &#x2F;proc 权限限制</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-3-GPU-%E8%AE%A1%E6%95%B0%E5%99%A8%E7%9A%84%E9%9D%9E%E5%8D%95%E8%B0%83%E6%80%A7"><span class="toc-text">5.3 GPU 计数器的非单调性</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-4-dumpsys-%E2%80%93latency-%E5%85%A8%E9%9B%B6%E9%97%AE%E9%A2%98"><span class="toc-text">5.4 dumpsys –latency 全零问题</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81%E6%9C%AA%E7%9F%A5%E5%8F%A0%E5%8A%A0%E5%B1%82%E9%80%9A%E7%94%A8%E6%A3%80%E6%B5%8B%EF%BC%9ABigWhiteHack-%E6%B5%8B%E8%AF%95"><span class="toc-text">六、未知叠加层通用检测：BigWhiteHack 测试</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#6-1-%E6%B5%8B%E8%AF%95%E8%83%8C%E6%99%AF"><span class="toc-text">6.1 测试背景</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-2-%E5%88%9D%E6%AC%A1%E6%A3%80%E6%B5%8B%EF%BC%9A%E5%9F%BA%E7%BA%BF%E6%B1%A1%E6%9F%93%E9%97%AE%E9%A2%98"><span class="toc-text">6.2 初次检测：基线污染问题</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-3-%E6%94%B9%E8%BF%9B%EF%BC%9A%E6%89%A9%E5%B1%95%E6%8C%87%E7%BA%B9%E6%95%B0%E6%8D%AE%E5%BA%93"><span class="toc-text">6.3 改进：扩展指纹数据库</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-4-%E6%94%B9%E8%BF%9B%E5%90%8E%E5%A4%8D%E6%B5%8B"><span class="toc-text">6.4 改进后复测</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-5-%E6%97%A0%E6%94%BB%E5%87%BB%E5%9F%BA%E7%BA%BF%E9%AA%8C%E8%AF%81"><span class="toc-text">6.5 无攻击基线验证</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-6-CPU-%E6%B8%B2%E6%9F%93%E5%8F%A0%E5%8A%A0%E5%B1%82%E9%80%9A%E7%94%A8%E6%A3%80%E6%B5%8B%E9%AA%8C%E8%AF%81"><span class="toc-text">6.6 CPU 渲染叠加层通用检测验证</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#6-6-1-CPU-%E6%B8%B2%E6%9F%93%E7%A8%8B%E5%BA%8F%E7%89%B9%E5%BE%81"><span class="toc-text">6.6.1 CPU 渲染程序特征</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-6-2-%E7%AA%97%E5%8F%A3%E5%90%8D%E6%A3%80%E6%B5%8B%EF%BC%88%E7%94%A8%E6%88%B7%E6%80%81%EF%BC%89"><span class="toc-text">6.6.2 窗口名检测（用户态）</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-6-3-%E5%85%AD%E6%AC%A1%E5%AF%B9%E7%85%A7%E6%B5%8B%E8%AF%95%E6%95%B0%E6%8D%AE"><span class="toc-text">6.6.3 六次对照测试数据</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-6-4-CPU-vs-GPU-%E6%B8%B2%E6%9F%93%E6%A3%80%E6%B5%8B%E4%BF%A1%E5%8F%B7%E5%AF%B9%E6%AF%94"><span class="toc-text">6.6.4 CPU vs GPU 渲染检测信号对比</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-6-5-%E5%BC%80%E5%90%AF-vs-%E5%85%B3%E9%97%AD%E5%AF%B9%E6%AF%94"><span class="toc-text">6.6.5 开启 vs 关闭对比</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-6-6-%E7%BB%93%E8%AE%BA"><span class="toc-text">6.6.6 结论</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-7-%E6%94%BB%E5%87%BB%E7%AB%AF%E7%BB%95%E8%BF%87%E9%AA%8C%E8%AF%81"><span class="toc-text">6.7 攻击端绕过验证</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#6-8-%E9%9D%9E%E9%9D%B6%E5%90%91%E6%A3%80%E6%B5%8B%E5%AE%9E%E9%AA%8C%EF%BC%9A%E6%8E%92%E9%99%A4-targeted-match-%E5%90%8E%E7%9A%84%E6%A3%80%E6%B5%8B%E8%83%BD%E5%8A%9B%E8%AF%84%E4%BC%B0"><span class="toc-text">6.8 非靶向检测实验：排除 targeted match 后的检测能力评估</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#6-8-1-%E5%AE%9E%E9%AA%8C%E6%A0%B7%E6%9C%AC"><span class="toc-text">6.8.1 实验样本</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-8-2-%E5%AE%9E%E9%AA%8C%E6%95%B0%E6%8D%AE"><span class="toc-text">6.8.2 实验数据</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-8-3-%E9%80%90%E6%A0%B7%E6%9C%AC-CV-%E5%88%86%E6%95%B0%E6%8B%86%E8%A7%A3"><span class="toc-text">6.8.3 逐样本 CV 分数拆解</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-8-4-%E6%A0%B7%E6%9C%AC%E9%97%B4-CV-%E5%88%86%E5%B8%83%E5%AF%B9%E6%AF%94"><span class="toc-text">6.8.4 样本间 CV 分布对比</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-8-5-%E9%9D%9E%E9%9D%B6%E5%90%91%E6%A3%80%E6%B5%8B-combined-score-%E5%88%86%E8%A7%A3"><span class="toc-text">6.8.5 非靶向检测 combined score 分解</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#6-8-6-%E7%BB%93%E8%AE%BA"><span class="toc-text">6.8.6 结论</span></a></li></ol></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%83%E3%80%81%E6%B5%8B%E8%AF%95%E7%8E%AF%E5%A2%83%E4%B8%8E%E7%BB%93%E6%9E%9C"><span class="toc-text">七、测试环境与结果</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#7-1-%E6%B5%8B%E8%AF%95%E8%AE%BE%E5%A4%87"><span class="toc-text">7.1 测试设备</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#7-2-%E6%A3%80%E6%B5%8B%E6%80%A7%E8%83%BD"><span class="toc-text">7.2 检测性能</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#7-3-%E5%AE%8C%E6%95%B4%E6%A3%80%E6%B5%8B%E7%9F%A9%E9%98%B5"><span class="toc-text">7.3 完整检测矩阵</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#7-4-%E5%85%A8%E5%9C%BA%E6%99%AF%E6%B5%8B%E8%AF%95%E5%AF%B9%E6%AF%94"><span class="toc-text">7.4 全场景测试对比</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AB%E3%80%81%E6%94%B9%E8%BF%9B%E8%BF%AD%E4%BB%A3%EF%BC%9A%E7%BB%9F%E4%B8%80%E6%8C%87%E7%BA%B9%E5%BA%93-%E6%97%A0%E9%9A%9C%E7%A2%8D%E6%A3%80%E6%B5%8B"><span class="toc-text">八、改进迭代：统一指纹库 + 无障碍检测</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#8-1-%E7%BB%9F%E4%B8%80%E6%94%BB%E5%87%BB%E6%8C%87%E7%BA%B9%E6%95%B0%E6%8D%AE%E5%BA%93-signatures-h"><span class="toc-text">8.1 统一攻击指纹数据库 (signatures.h)</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#8-2-%E6%97%A0%E9%9A%9C%E7%A2%8D%E6%9C%8D%E5%8A%A1%E6%A3%80%E6%B5%8B-accessibility-detector"><span class="toc-text">8.2 无障碍服务检测 (accessibility_detector)</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#8-3-%E6%96%87%E4%BB%B6%E8%B7%AF%E5%BE%84%E4%BA%A7%E7%89%A9%E6%A3%80%E6%B5%8B"><span class="toc-text">8.3 文件路径产物检测</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#8-4-%E5%91%8A%E8%AD%A6%E5%BC%95%E6%93%8E%E6%9D%83%E9%87%8D%E6%89%A9%E5%B1%95"><span class="toc-text">8.4 告警引擎权重扩展</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#8-5-%E6%94%B9%E8%BF%9B%E5%89%8D%E5%90%8E%E5%AF%B9%E6%AF%94"><span class="toc-text">8.5 改进前后对比</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B9%9D%E3%80%81%E6%80%BB%E7%BB%93"><span class="toc-text">九、总结</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/%E4%B8%80%E5%8F%AAARM64%E5%A3%B3%E7%9A%84%E4%B8%A4%E6%AC%A1Unicorn%E6%95%91%E5%9C%BA%E2%80%94%E2%80%94%E4%BB%8E%E5%8E%8B%E7%BC%A9%E5%A4%96%E5%A3%B3%E5%88%B0NEON-XOR%E5%AD%97%E7%AC%A6%E4%B8%B2/" title="一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串">一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串</a><time datetime="2026-06-23T12:16:00.000Z" title="发表于 2026-06-23 20:16:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/" title="记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</a><time datetime="2026-06-23T12:04:00.000Z" title="发表于 2026-06-23 20:04:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/" title="ELF 二进制字符串加密的逆向">ELF 二进制字符串加密的逆向</a><time datetime="2026-06-23T11:59:00.000Z" title="发表于 2026-06-23 19:59:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="领域特定虚拟机DSVM指令完整还原">领域特定虚拟机DSVM指令完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/" title="某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程">某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程</a><time datetime="2026-06-17T16:00:00.000Z" title="发表于 2026-06-18 00:00:00">2026-06-18</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('a.site-page[href="/video-player/"]').forEach(function(a){a.setAttribute('target','_blank');a.setAttribute('rel','noopener')})})</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

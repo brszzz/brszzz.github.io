@@ -1,0 +1,499 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>ELF 二进制字符串加密的逆向 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="逆向一个 Android ARM64 ELF 的自定义字符串加密方案，还原双 pass 流密码算法（含 KEY_TERM 完整性锚点机制），写 Python 脚本一次性解密全部 956 条字符串。顺带发现一个 NEON 加壳框架。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="ELF 二进制字符串加密的逆向">
+<meta property="og:url" content="https://brszzz.github.io/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="逆向一个 Android ARM64 ELF 的自定义字符串加密方案，还原双 pass 流密码算法（含 KEY_TERM 完整性锚点机制），写 Python 脚本一次性解密全部 956 条字符串。顺带发现一个 NEON 加壳框架。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2026-06-23T11:59:00.000Z">
+<meta property="article:modified_time" content="2026-06-23T12:25:16.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="ARM64">
+<meta property="article:tag" content="Python">
+<meta property="article:tag" content="反混淆">
+<meta property="article:tag" content="逆向工程">
+<meta property="article:tag" content="ELF">
+<meta property="article:tag" content="IDA-Pro">
+<meta property="article:tag" content="Android">
+<meta property="article:tag" content="字符串加密">
+<meta property="article:tag" content="流密码">
+<meta property="article:tag" content="加壳">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "ELF 二进制字符串加密的逆向",
+  "url": "https://brszzz.github.io/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2026-06-23T11:59:00.000Z",
+  "dateModified": "2026-06-23T12:25:16.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'ELF 二进制字符串加密的逆向',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">35</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">132</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div><div class="menus_item"><a class="site-page" href="/video-player/"><i class="fa-fw fas fa-play"></i><span> video player</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">ELF 二进制字符串加密的逆向</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div><div class="menus_item"><a class="site-page" href="/video-player/"><i class="fa-fw fas fa-play"></i><span> video player</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">ELF 二进制字符串加密的逆向</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-06-23T11:59:00.000Z" title="发表于 2026-06-23 19:59:00">2026-06-23</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-23T12:25:16.000Z" title="更新于 2026-06-23 20:25:16">2026-06-23</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">33k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>1:59分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="ELF-二进制字符串加密的逆向"><a href="#ELF-二进制字符串加密的逆向" class="headerlink" title="ELF 二进制字符串加密的逆向"></a>ELF 二进制字符串加密的逆向</h1><blockquote>
+<p>前一阵拿到一个 Android ARM64 的静态 ELF，里面所有字符串都是加密的，strings 一把下去啥也看不见。花了两天把它的保护方案完整逆了出来，写篇记录分享一下过程。</p>
+</blockquote>
+<hr>
+<h2 id="0-先说说这东西长什么样"><a href="#0-先说说这东西长什么样" class="headerlink" title="0. 先说说这东西长什么样"></a>0. 先说说这东西长什么样</h2><p>文件是个独立可执行的 ELF，3357 个函数，1438 个字符串——说是 1438，实际上 IDA 识别出来的全是密文，没有一条能直接读。</p>
+<p>大致结构：</p>
+<table>
+<thead>
+<tr>
+<th>段</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>.text</code></td>
+<td>3357 个函数，<code>.init_array</code> 里挂了一个 ctor</td>
+</tr>
+<tr>
+<td><code>.rodata</code></td>
+<td>956 条加密字符串的密文池</td>
+</tr>
+<tr>
+<td><code>.data.rel.ro</code></td>
+<td>956 个 40 字节的描述符结构，每个指向密文 + 存密钥</td>
+</tr>
+<tr>
+<td><code>.data</code> <code>0x1B7FB0..C7</code></td>
+<td>24 字节的”完整性锚点”，后面会详细说</td>
+</tr>
+<tr>
+<td><code>.packinfo</code> <code>0x1B8180</code></td>
+<td>自定义壳的元数据段</td>
+</tr>
+</tbody></table>
+<p>关键函数一览：</p>
+<table>
+<thead>
+<tr>
+<th>地址</th>
+<th>角色</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>sub_127A10</code></td>
+<td><code>.init_array</code> ctor，壳解密器（这个版本没启用）</td>
+</tr>
+<tr>
+<td><code>sub_F5AC8</code></td>
+<td>主业务入口，75 KB，大到 Hex-Rays 拒绝反编译</td>
+</tr>
+<tr>
+<td><code>sub_10F13C / 10F2F4 / 10F408</code></td>
+<td><strong>字符串解密的三层调用链</strong>——今天的重点</td>
+</tr>
+<tr>
+<td><code>sub_6A7C0</code></td>
+<td>唯一的 <code>system()</code> 入口，所有 shell 命令都走这里</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="1-从”找不到字符串”说起"><a href="#1-从”找不到字符串”说起" class="headerlink" title="1. 从”找不到字符串”说起"></a>1. 从”找不到字符串”说起</h2><p>拿到样本先跑 <code>strings</code>，基本全是乱码。用 IDA 打开，所有交叉引用指向的字符串也读不了。这说明 <strong>字符串不是简单的异或，而且每个引用点有自己的解密参数</strong>。</p>
+<p>在 <code>.data.rel.ro</code> 段里发现了规律：每隔 40 字节出现一个结构体，里面有两个指针、两个长度、还有一个 16 位的短整数。结构大致是这样：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">str_entry</span> &#123;</span>      <span class="comment">// 40 字节</span></span><br><span class="line">    <span class="type">const</span> u8* ptr1;     <span class="comment">// offset 0   — 指向 .rodata 密文段1</span></span><br><span class="line">    <span class="type">size_t</span>    len1;     <span class="comment">// offset 8</span></span><br><span class="line">    <span class="type">const</span> u8* ptr2;     <span class="comment">// offset 16  — 指向 .rodata 密文段2（可为0）</span></span><br><span class="line">    <span class="type">size_t</span>    len2;     <span class="comment">// offset 24</span></span><br><span class="line">    u16       key;      <span class="comment">// offset 32  — 16 位密钥</span></span><br><span class="line">    u8        _pad[<span class="number">6</span>];  <span class="comment">// offset 34..39</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>也就是说，<strong>每条加密字符串都对应一个 40 字节的描述符</strong>，里面存了密文在哪、多长、以及解密密钥。956 条字符串就有 956 个这样的描述符。</p>
+<p>这就好办了——找到了密文和密钥的存放位置，接下来只需要搞清楚解密算法。</p>
+<hr>
+<h2 id="2-追解密函数"><a href="#2-追解密函数" class="headerlink" title="2. 追解密函数"></a>2. 追解密函数</h2><h3 id="2-1-三层调用链"><a href="#2-1-三层调用链" class="headerlink" title="2.1 三层调用链"></a>2.1 三层调用链</h3><p>随便找一个引用加密字符串的地方，比如某处 <code>BL sub_10F13C</code>，跟进去。调用关系是这样的：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">sub_10F13C(out_pair, &amp;entry)               ← 调用者一次解一条</span><br><span class="line">   │</span><br><span class="line">   ├─ sub_10F2F4(&amp;out1, ptr1, len1, key)</span><br><span class="line">   │     └─ sub_10F408(buf, len1, key)     ← 核心解密器</span><br><span class="line">   │</span><br><span class="line">   └─ if (ptr2) sub_10F2F4(&amp;out2, ptr2, len2, key ^ 0xBEEF)</span><br><span class="line">         └─ sub_10F408(buf, len2, key ^ 0xBEEF)</span><br><span class="line"></span><br><span class="line">最后 sub_10F13C 把 out1 || out2 拼接成完整字符串返回</span><br></pre></td></tr></table></figure>
+
+<p>注意几个关键信息：</p>
+<ul>
+<li><strong>双段结构</strong>：一条字符串可能分两段存放，第二段的密钥要异或 <code>0xBEEF</code></li>
+<li>**核心算法在 <code>sub_10F408</code>**：输入是密文 buffer + 长度 + 16 位密钥</li>
+<li>第一段和第二段用的是<strong>同一个核心算法</strong>，只是密钥不同</li>
+</ul>
+<h3 id="2-2-找到”完整性锚点”-KEY-TERM"><a href="#2-2-找到”完整性锚点”-KEY-TERM" class="headerlink" title="2.2 找到”完整性锚点” KEY_TERM"></a>2.2 找到”完整性锚点” KEY_TERM</h3><p>在追 <code>sub_10F408</code> 之前，先要解决一个前置问题。在 <code>.data</code> 段 <code>0x1B7FB0</code> 处有一块 24 字节的硬编码数据：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">91 e9 3e b8 29 b1 8b 92  03 e1 4e 1a 52 c3 a7 88</span><br><span class="line">fb 9e 17 66 23 6d ec 31</span><br></pre></td></tr></table></figure>
+
+<p>在 <code>sub_10F408</code> 的代码里，这 24 字节被一个固定的算法折叠成一个 32 位常量 <code>KEY_TERM</code>：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 偶数下标 vs 奇数下标的字节做 XOR，覆盖全部 24 字节</span></span><br><span class="line">A  =  B[<span class="number">8</span>] ^ B[<span class="number">0</span>]  ^ B[<span class="number">16</span>] ^ B[<span class="number">4</span>]  ^ B[<span class="number">12</span>] ^ B[<span class="number">20</span>]</span><br><span class="line">Bc = (B[<span class="number">2</span>] ^ B[<span class="number">10</span>] ^ B[<span class="number">18</span>] ^ B[<span class="number">6</span>]  ^ B[<span class="number">14</span>] ^ B[<span class="number">22</span>]) ^ <span class="number">0xB8</span></span><br><span class="line">KEY_TERM = A | (Bc &lt;&lt; <span class="number">16</span>)        <span class="comment">// 实测 = 0x1F0031</span></span><br></pre></td></tr></table></figure>
+
+<p>这个 <code>KEY_TERM</code> 会参与 <code>sub_10F408</code> 里每一轮的状态计算。换句话说，**这 24 字节是嵌死在二进制里的”第二把钥匙”**——你即使拿到了 40 字节描述符里的 key，没有正确的 <code>KEY_TERM</code> 也解不出来。动其中任意一个字节，所有 956 条字符串全部乱码。</p>
+<p>这算是一种<strong>绑定二进制的反剥离</strong>：把 ELF 的 <code>.data</code> 段单独 dump 出来没用，patch 任何一个字节也会破坏解密。</p>
+<h3 id="2-3-核心算法-sub-10F408：双-pass-流密码"><a href="#2-3-核心算法-sub-10F408：双-pass-流密码" class="headerlink" title="2.3 核心算法 sub_10F408：双 pass 流密码"></a>2.3 核心算法 <code>sub_10F408</code>：双 pass 流密码</h3><p>这是最核心的部分。<code>sub_10F408</code> 地址在 <code>0x10F408</code>，做两遍变换，每一遍都像一个自制的流密码。</p>
+<p>先看它用到的魔术常量：</p>
+<table>
+<thead>
+<tr>
+<th>常量</th>
+<th>数值</th>
+<th>来源&#x2F;说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>DELTA</code></td>
+<td><code>0x7A35D295</code></td>
+<td>自定义”前进步长”</td>
+</tr>
+<tr>
+<td><code>NEG</code></td>
+<td><code>0x9E3779B9</code></td>
+<td>黄金分割比的 32 位整数化（TEA&#x2F;XXTEA 同款）</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>0xA5A5</code></td>
+<td>密钥变换用</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>0xA2F9836E</code></td>
+<td>π 的 32 位整数化</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>0xF4764525</code></td>
+<td>自定义常量</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>0x517CC1B7</code></td>
+<td>√2 的 32 位整数化</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>0xBEEF</code></td>
+<td>段 2 密钥的异或掩码</td>
+</tr>
+</tbody></table>
+<p>一眼就能看出来作者在借用 TEA 系列的魔术常量，但算法结构完全是自创的，跟 TEA 没有直接关系。</p>
+<h4 id="Pass-1：双状态机正向-反向交替"><a href="#Pass-1：双状态机正向-反向交替" class="headerlink" title="Pass 1：双状态机正向 + 反向交替"></a>Pass 1：双状态机正向 + 反向交替</h4><p>翻译成伪代码大概是这样：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">v3 = DELTA - DELTA * n;     <span class="comment">// 注意：长度 n 参与初始化！</span></span><br><span class="line">v4 = <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">for</span> (i = <span class="number">0</span>; i &lt; n; i++) &#123;</span><br><span class="line">    <span class="comment">// 状态机 1：正向推进</span></span><br><span class="line">    v7  = v3 ^ ROR(NEG * (key ^ <span class="number">0xA5A5</span>) ^ <span class="number">0xA2F9836E</span> ^ KEY_TERM, <span class="number">21</span>);</span><br><span class="line">    v3 += DELTA;</span><br><span class="line">    s7  = ROL32(v7, <span class="number">5</span>);</span><br><span class="line">    t   = d[i] ^ (s7 &amp; <span class="number">0xFF</span>) ^ ((s7 &gt;&gt; <span class="number">16</span>) &amp; <span class="number">0xFF</span>);</span><br><span class="line">    t   = ROL8(t, <span class="number">4</span>);        <span class="comment">// 字节级 4 位旋转</span></span><br><span class="line"></span><br><span class="line">    <span class="comment">// 状态机 2：反向推进</span></span><br><span class="line">    v10 = v4 ^ ROR(NEG * key ^ <span class="number">0xF4764525</span> ^ KEY_TERM, <span class="number">21</span>);</span><br><span class="line">    v4 -= DELTA;</span><br><span class="line">    s10 = ROL32(v10, <span class="number">5</span>);</span><br><span class="line">    d[i] = t ^ (s10 &amp; <span class="number">0xFF</span>) ^ ((s10 &gt;&gt; <span class="number">16</span>) &amp; <span class="number">0xFF</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>几个值得注意的点：</p>
+<ul>
+<li><strong><code>v3</code> 用 <code>DELTA - DELTA * n</code> 初始化</strong>，意味着长度参与状态——你如果截短哪怕一个字节，整条串都解不对</li>
+<li><strong>v3 正向加 DELTA，v4 反向减 DELTA</strong>——“左右开弓”，相邻字节的掩码完全无关</li>
+<li><strong><code>ROL8(t, 4)</code></strong> 字节级旋转是用来破坏纯线性关系的——如果去掉这步，整个加密就退化成简单的异或流</li>
+</ul>
+<h4 id="Pass-2：第二遍，引入减法"><a href="#Pass-2：第二遍，引入减法" class="headerlink" title="Pass 2：第二遍，引入减法"></a>Pass 2：第二遍，引入减法</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line">v11 = <span class="number">0</span>;</span><br><span class="line">v12 = NEG * key;</span><br><span class="line"></span><br><span class="line"><span class="keyword">for</span> (i = <span class="number">0</span>; i &lt; n; i++) &#123;</span><br><span class="line">    v13 = v11 ^ ROR(v12 ^ <span class="number">0x517CC1B7</span> ^ KEY_TERM, <span class="number">21</span>);</span><br><span class="line">    s13 = ROL32(v13, <span class="number">5</span>);</span><br><span class="line">    v14 = (d[i] - ((s13 &amp; <span class="number">0xFF</span>) ^ ((s13 &gt;&gt; <span class="number">16</span>) &amp; <span class="number">0xFF</span>))) &amp; <span class="number">0xFF</span>;</span><br><span class="line">    v14 = ROL8(v14, <span class="number">5</span>);      <span class="comment">// 注意：这里是 rol8(5)，和 Pass 1 的 rol8(4) 不同！</span></span><br><span class="line"></span><br><span class="line">    v15 = v11 ^ ROR(KEY_TERM ^ v12, <span class="number">21</span>);</span><br><span class="line">    v11 -= DELTA;            <span class="comment">// 状态反向推进</span></span><br><span class="line">    s15 = ROL32(v15, <span class="number">5</span>);</span><br><span class="line">    d[i] = v14 ^ (s15 &amp; <span class="number">0xFF</span>) ^ ((s15 &gt;&gt; <span class="number">16</span>) &amp; <span class="number">0xFF</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>Pass 2 跟 Pass 1 最大的不同是<strong>把异或换成了减法</strong>：<code>d[i] - mask</code> 而不是 <code>d[i] ^ mask</code>。减法不满足交换律，这让”密文 &#x3D; 明文 XOR 流密钥”这种简单假设彻底失效。</p>
+<p>两遍叠加下来：<strong>字节维度上非线性、位置相关、长度相关、密钥相关</strong>。</p>
+<h3 id="2-4-验证：这个变换是自反的"><a href="#2-4-验证：这个变换是自反的" class="headerlink" title="2.4 验证：这个变换是自反的"></a>2.4 验证：这个变换是自反的</h3><p>写脚本之前先要确认一件事：加密和解密是不是同一个函数？</p>
+<p>用 IDAPython 在调试器里设断点实测了一条已知字符串——调用 <code>sub_10F408</code> 前是密文，调用后变明文。又试了把明文当输入再调一次——输出变回密文。</p>
+<p><strong>确认：<code>sub_10F408</code> 是自反变换（involution），加密和解密是同一个操作。</strong> 这就省事了，不需要分别实现 encrypt 和 decrypt。</p>
+<hr>
+<h2 id="3-写-Python-解密脚本"><a href="#3-写-Python-解密脚本" class="headerlink" title="3. 写 Python 解密脚本"></a>3. 写 Python 解密脚本</h2><h3 id="3-1-复刻核心算法"><a href="#3-1-复刻核心算法" class="headerlink" title="3.1 复刻核心算法"></a>3.1 复刻核心算法</h3><p>理解了算法之后，翻译成 Python 就很直接了：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br></pre></td><td class="code"><pre><span class="line">DELTA, NEG = <span class="number">0x7A35D295</span>, <span class="number">0x9E3779B9</span></span><br><span class="line">KEY_TERM = <span class="number">0x1F0031</span>   <span class="comment"># 从 byte_1B7FB0..C7 的 24 字节推导出来</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">u32</span>(<span class="params">x</span>):       <span class="keyword">return</span> x &amp; <span class="number">0xFFFFFFFF</span></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">rol</span>(<span class="params">x, r, w=<span class="number">32</span></span>): m = (<span class="number">1</span> &lt;&lt; w) - <span class="number">1</span>; r %= w; <span class="keyword">return</span> ((x &lt;&lt; r) | (x &gt;&gt; (w - r))) &amp; m</span><br><span class="line"><span class="keyword">def</span> <span class="title function_">ror</span>(<span class="params">x, r, w=<span class="number">32</span></span>): m = (<span class="number">1</span> &lt;&lt; w) - <span class="number">1</span>; r %= w; <span class="keyword">return</span> ((x &gt;&gt; r) | (x &lt;&lt; (w - r))) &amp; m</span><br><span class="line"></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">decrypt</span>(<span class="params">ct: <span class="built_in">bytes</span>, key: <span class="built_in">int</span></span>) -&gt; <span class="built_in">bytes</span>:</span><br><span class="line">    d = <span class="built_in">bytearray</span>(ct)</span><br><span class="line">    n = <span class="built_in">len</span>(d)</span><br><span class="line">    <span class="keyword">if</span> n == <span class="number">0</span>:</span><br><span class="line">        <span class="keyword">return</span> <span class="built_in">bytes</span>(d)</span><br><span class="line"></span><br><span class="line">    <span class="comment"># ===== Pass 1 =====</span></span><br><span class="line">    v3 = u32(DELTA - DELTA * n)</span><br><span class="line">    v4 = <span class="number">0</span></span><br><span class="line">    <span class="keyword">for</span> i <span class="keyword">in</span> <span class="built_in">range</span>(n):</span><br><span class="line">        s7  = rol(u32(v3 ^ ror(u32(NEG * (key ^ <span class="number">0xA5A5</span>)) ^ <span class="number">0xA2F9836E</span> ^ KEY_TERM, <span class="number">21</span>)), <span class="number">5</span>)</span><br><span class="line">        v3  = u32(v3 + DELTA)</span><br><span class="line">        t   = rol((d[i] ^ (s7 &amp; <span class="number">0xFF</span>) ^ ((s7 &gt;&gt; <span class="number">16</span>) &amp; <span class="number">0xFF</span>)) &amp; <span class="number">0xFF</span>, <span class="number">4</span>, <span class="number">8</span>)</span><br><span class="line"></span><br><span class="line">        s10 = rol(u32(v4 ^ ror(u32(NEG * key) ^ <span class="number">0xF4764525</span> ^ KEY_TERM, <span class="number">21</span>)), <span class="number">5</span>)</span><br><span class="line">        v4  = u32(v4 - DELTA)</span><br><span class="line">        d[i] = t ^ (s10 &amp; <span class="number">0xFF</span>) ^ ((s10 &gt;&gt; <span class="number">16</span>) &amp; <span class="number">0xFF</span>)</span><br><span class="line"></span><br><span class="line">    <span class="comment"># ===== Pass 2 =====</span></span><br><span class="line">    v11 = <span class="number">0</span></span><br><span class="line">    v12 = u32(NEG * key)</span><br><span class="line">    <span class="keyword">for</span> i <span class="keyword">in</span> <span class="built_in">range</span>(n):</span><br><span class="line">        s13 = rol(u32(v11 ^ ror(v12 ^ <span class="number">0x517CC1B7</span> ^ KEY_TERM, <span class="number">21</span>)), <span class="number">5</span>)</span><br><span class="line">        v14 = rol((d[i] - ((s13 &amp; <span class="number">0xFF</span>) ^ ((s13 &gt;&gt; <span class="number">16</span>) &amp; <span class="number">0xFF</span>))) &amp; <span class="number">0xFF</span>, <span class="number">5</span>, <span class="number">8</span>)</span><br><span class="line"></span><br><span class="line">        s15 = rol(u32(v11 ^ ror(KEY_TERM ^ v12, <span class="number">21</span>)), <span class="number">5</span>)</span><br><span class="line">        v11 = u32(v11 - DELTA)</span><br><span class="line">        d[i] = v14 ^ (s15 &amp; <span class="number">0xFF</span>) ^ ((s15 &gt;&gt; <span class="number">16</span>) &amp; <span class="number">0xFF</span>)</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> <span class="built_in">bytes</span>(d)</span><br></pre></td></tr></table></figure>
+
+<h3 id="3-2-处理双段结构"><a href="#3-2-处理双段结构" class="headerlink" title="3.2 处理双段结构"></a>3.2 处理双段结构</h3><p>有了核心解密函数，再包一层处理描述符的双段逻辑：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">decrypt_entry</span>(<span class="params">seg1: <span class="built_in">bytes</span>, seg2: <span class="built_in">bytes</span>, key: <span class="built_in">int</span></span>) -&gt; <span class="built_in">bytes</span>:</span><br><span class="line">    <span class="string">&quot;&quot;&quot;完整解一条字符串：两段密文 + 16 位密钥&quot;&quot;&quot;</span></span><br><span class="line">    out = <span class="string">b&#x27;&#x27;</span></span><br><span class="line">    <span class="keyword">if</span> seg1:</span><br><span class="line">        out += decrypt(seg1, key)</span><br><span class="line">    <span class="keyword">if</span> seg2:</span><br><span class="line">        out += decrypt(seg2, key ^ <span class="number">0xBEEF</span>)</span><br><span class="line">    <span class="keyword">return</span> out</span><br></pre></td></tr></table></figure>
+
+<h3 id="3-3-写-IDAPython-批量扫描脚本"><a href="#3-3-写-IDAPython-批量扫描脚本" class="headerlink" title="3.3 写 IDAPython 批量扫描脚本"></a>3.3 写 IDAPython 批量扫描脚本</h3><p>描述符都在 <code>.data.rel.ro</code> 段里，结构固定 40 字节。写个 IDAPython 脚本遍历：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> ida_bytes</span><br><span class="line"><span class="keyword">import</span> idc</span><br><span class="line"></span><br><span class="line"><span class="comment"># 假设已经确定了描述符的起始和结束地址范围</span></span><br><span class="line"><span class="comment"># 每个 40 字节的结构：</span></span><br><span class="line"><span class="comment">#   +0: ptr1 (8 bytes)</span></span><br><span class="line"><span class="comment">#   +8: len1 (8 bytes)</span></span><br><span class="line"><span class="comment">#  +16: ptr2 (8 bytes)</span></span><br><span class="line"><span class="comment"># +24: len2 (8 bytes)</span></span><br><span class="line"><span class="comment"># +32: key  (2 bytes)</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">scan_and_decrypt</span>(<span class="params">start_ea, end_ea</span>):</span><br><span class="line">    results = []</span><br><span class="line">    ea = start_ea</span><br><span class="line">    <span class="keyword">while</span> ea &lt; end_ea:</span><br><span class="line">        ptr1 = ida_bytes.get_qword(ea + <span class="number">0</span>)</span><br><span class="line">        len1 = ida_bytes.get_qword(ea + <span class="number">8</span>)</span><br><span class="line">        ptr2 = ida_bytes.get_qword(ea + <span class="number">16</span>)</span><br><span class="line">        len2 = ida_bytes.get_qword(ea + <span class="number">24</span>)</span><br><span class="line">        key  = ida_bytes.get_word(ea + <span class="number">32</span>)</span><br><span class="line"></span><br><span class="line">        seg1 = ida_bytes.get_bytes(ptr1, len1) <span class="keyword">if</span> ptr1 <span class="keyword">and</span> len1 <span class="keyword">else</span> <span class="string">b&#x27;&#x27;</span></span><br><span class="line">        seg2 = ida_bytes.get_bytes(ptr2, len2) <span class="keyword">if</span> ptr2 <span class="keyword">and</span> len2 <span class="keyword">else</span> <span class="string">b&#x27;&#x27;</span></span><br><span class="line"></span><br><span class="line">        <span class="keyword">try</span>:</span><br><span class="line">            plain = decrypt_entry(seg1, seg2, key)</span><br><span class="line">            results.append((ea, plain.decode(<span class="string">&#x27;utf-8&#x27;</span>, errors=<span class="string">&#x27;replace&#x27;</span>)))</span><br><span class="line">        <span class="keyword">except</span>:</span><br><span class="line">            results.append((ea, <span class="string">&#x27;&lt;decrypt failed&gt;&#x27;</span>))</span><br><span class="line"></span><br><span class="line">        ea += <span class="number">40</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> results</span><br></pre></td></tr></table></figure>
+
+<p>实际跑一遍，956 条全部解密成功，耗时不到 5 秒。</p>
+<hr>
+<h2 id="4-为什么这套保护”一击就碎”"><a href="#4-为什么这套保护”一击就碎”" class="headerlink" title="4. 为什么这套保护”一击就碎”"></a>4. 为什么这套保护”一击就碎”</h2><p>回头看看这套方案的设计意图和实际效果。</p>
+<p>作者想防的东西：</p>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>想防什么</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>双段 + key ^ 0xBEEF</td>
+<td>不让逆向者直接把 <code>.rodata</code> dump 出来就能读</td>
+</tr>
+<tr>
+<td>KEY_TERM 绑 24 字节常量</td>
+<td>二进制剥离&#x2F;patch 后解不出来</td>
+</tr>
+<tr>
+<td>DELTA * n 初始化</td>
+<td>截短密文就全乱</td>
+</tr>
+<tr>
+<td>双状态机 + Pass 2 减法</td>
+<td>抵抗差分分析</td>
+</tr>
+<tr>
+<td>各种魔术常量</td>
+<td>看起来像 TEA，增加迷惑性</td>
+</tr>
+</tbody></table>
+<p>但实际上，它缺了几个关键的东西：</p>
+<ul>
+<li><strong>没有 PRNG &#x2F; KDF</strong>：全部状态只依赖于 <code>(key, n, KEY_TERM)</code> 三个值</li>
+<li><strong>没有外部熵</strong>：不读 <code>/proc/*</code>、不读时间、不读设备标识</li>
+<li><strong>KEY_TERM 又是从二进制硬编码算出来的</strong>：拿到二进制就拿到一切</li>
+</ul>
+<p>所以结论很简单——<strong>它是混淆（obfuscation），不是密码学</strong>。只要把 <code>sub_10F408</code> 的算法逆出来，所有密文一次性全解。</p>
+<p>我猜作者可能也知道这点。这套东西的真正目的不是防专业逆向，而是<strong>提高静态分析的自动化门槛</strong>——让 strings、grep 这类工具彻底失灵，让基于特征码的自动扫描也扫不出东西。</p>
+<hr>
+<h2 id="5-顺带发现的壳框架"><a href="#5-顺带发现的壳框架" class="headerlink" title="5. 顺带发现的壳框架"></a>5. 顺带发现的壳框架</h2><p>除了字符串加密，这个 ELF 还埋了一个自定义的加壳框架，虽然这个版本没启用。</p>
+<p><code>.packinfo</code> 段在 <code>0x1B8180</code>，结构很简单：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">packinfo_hdr</span> &#123;</span>        <span class="comment">// 16 字节</span></span><br><span class="line">    <span class="type">uint32_t</span> magic;          <span class="comment">// &#x27;PACK&#x27; = 0x5041434B</span></span><br><span class="line">    <span class="type">uint32_t</span> count;          <span class="comment">// 3（这个版本硬编码必须等于 3）</span></span><br><span class="line">    <span class="type">uint64_t</span> _pad;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">packinfo_entry</span> &#123;</span>      <span class="comment">// 0x18 字节</span></span><br><span class="line">    <span class="type">uint64_t</span> _reserved;</span><br><span class="line">    <span class="type">uint64_t</span> segment_rva;    <span class="comment">// 待解密区段的相对地址</span></span><br><span class="line">    <span class="type">uint64_t</span> segment_len;    <span class="comment">// 长度</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>解密器是 <code>sub_127A10</code>，挂在 <code>.init_array</code> 里，在 <code>main()</code> 之前由 loader 调用。用的是 NEON 指令做 XOR + ROL3：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">EOR   V3.16B, V4.16B, V3.16B    ; D ^= K1</span><br><span class="line">USHR  V5.16B, V3.16B, #5</span><br><span class="line">SHL   V3.16B, V3.16B, #3</span><br><span class="line">ORR   V3.16B, V3.16B, V5.16B    ; ROL by 3（字节级）</span><br><span class="line">EOR   V3.16B, V3.16B, V4.16B    ; ^= K2</span><br></pre></td></tr></table></figure>
+
+<p>密钥 <code>K1</code>&#x2F;<code>K2</code> 本身还经过三张 NEON TBL 表做了置换，不能直接从 <code>.data</code> dump 出来直接用。</p>
+<p>里面还带了一个反 dump 的 fence——解密前要先调 <code>dladdr(&amp;packinfo, &amp;info)</code> 确认自己在原版 ELF 里跑。如果你把 ELF 复制到别的 loader 里分析，<code>dladdr</code> 找不到基址，整个壳就静默关闭。</p>
+<p>不过在当前版本里，三个 entry 全是 0——也就是说没有任何区段被实际加密。这只是个<strong>框架</strong>，下一版填上区段地址就能用。</p>
+<hr>
+<h2 id="6-解密结果能告诉我们什么（部分示例）"><a href="#6-解密结果能告诉我们什么（部分示例）" class="headerlink" title="6. 解密结果能告诉我们什么（部分示例）"></a>6. 解密结果能告诉我们什么（部分示例）</h2><p>956 条字符串全部解出来后，程序的行为就一目了然了。这里只举几个典型的例子来说明解密的价值，完整列表就不贴了。</p>
+<p><strong>Shell 命令模板类：</strong></p>
+<p>所有的命令都走同一个入口 <code>sub_6A7C0</code>，这个函数做的事就是把三段解密出来的固定字符串拼成：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">/system/bin/sh -c &quot;&lt;模板命令&gt;&quot; 1&gt;/dev/null 2&gt;&amp;1</span><br></pre></td></tr></table></figure>
+
+<p>三段密文的解密参数：</p>
+<table>
+<thead>
+<tr>
+<th>入口地址</th>
+<th>seg1 偏移</th>
+<th>len1</th>
+<th>key</th>
+<th>解密结果</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0x1A2C48</code></td>
+<td><code>0x220CF</code></td>
+<td>19</td>
+<td><code>0x0000</code></td>
+<td><code>/system/bin/sh -c &quot;</code></td>
+</tr>
+<tr>
+<td><code>0x1A4958</code></td>
+<td><code>0x234F0</code></td>
+<td>18</td>
+<td><code>0x01E4</code></td>
+<td><code>&quot; 1&gt;/dev/null 2&gt;&amp;1</code></td>
+</tr>
+<tr>
+<td><code>0x1A9CC8</code></td>
+<td><code>0x2703D</code></td>
+<td>1</td>
+<td><code>0x027A</code></td>
+<td><code>&quot;</code></td>
+</tr>
+</tbody></table>
+<p>中间那个 <code>&lt;模板命令&gt;</code> 就是从其他 956 条字符串里解出来的。整个二进制里 <code>sub_6A7C0</code> 被调用了 412 次，<strong>每条命令模板都硬编码在二进制里，没有任何一条来自网络</strong>。</p>
+<p><strong>命令类型大致分布：</strong></p>
+<ul>
+<li><strong>文件删除类</strong>：清各种 SDK 缓存和系统追踪文件，比如 <code>rm -rf &lt;某应用数据目录&gt;/cache/*</code>、清 <code>/data/system/dropbox</code>、清 <code>/data/anr</code> 等等</li>
+<li><strong>设备标识篡改类</strong>：用 <code>resetprop</code> 和 <code>settings put</code> 伪造几十个系统属性和设置项——这是脚本的核心功能，大约占了 130+ 条命令</li>
+<li><strong>网络重置类</strong>：<code>iptables</code>&#x2F;<code>ip6tables</code> 清规则、<code>ifconfig wlan0 hw ether</code> 改 MAC、飞行模式开关等</li>
+<li><strong>包管理类</strong>：<code>pm path</code>、<code>pm install -r</code>、<code>am force-stop</code> 等</li>
+<li><strong>内核参数调整类</strong>：<code>echo</code> 往 <code>/proc/sys/</code> 写值，比如提高 inotify 上限、关 ptrace 限制等</li>
+</ul>
+<p><strong>License 校验相关：</strong></p>
+<p>解出来一个域名和几个 HTTP POST 参数模板，拼起来大概是这样：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">POST /&lt;path&gt; HTTP/1.1</span><br><span class="line">Host: &lt;某个域名&gt;</span><br><span class="line">Content-Type: application/x-www-form-urlencoded</span><br><span class="line"></span><br><span class="line">id=&lt;SKU&gt;&amp;kami=&lt;卡密&gt;&amp;sign=&lt;签名&gt;</span><br></pre></td></tr></table></figure>
+
+<p>就是个明文 HTTP 的卡密激活校验，不是远程控制通道。</p>
+<hr>
+<h2 id="7-总结一下这个过程的收获"><a href="#7-总结一下这个过程的收获" class="headerlink" title="7. 总结一下这个过程的收获"></a>7. 总结一下这个过程的收获</h2><p>回头看整个逆向过程，核心就是三步：</p>
+<ol>
+<li><strong>找到密文和密钥的存放位置</strong>（<code>.data.rel.ro</code> 里的 40 字节描述符）</li>
+<li><strong>逆向核心解密算法</strong>（<code>sub_10F408</code> 的双 pass 流密码 + <code>KEY_TERM</code> 锚点）</li>
+<li><strong>写脚本批量解密</strong>（Python 复刻算法 + IDAPython 遍历描述符）</li>
+</ol>
+<p>其中第 2 步花的时间最多。<code>sub_10F408</code> 的伪代码大概 40 行，但是双状态机 + 两遍不同变换叠在一起，静态看很容易绕晕。解决思路是：先不管那些魔术常量从哪来的，把循环结构和数据流图画清楚；再用 IDA 的调试器对一条已知字符串下单步跟踪，验证伪代码的每一步——看寄存器里的值跟自己的理解是否对得上。</p>
+<p>有一个小技巧值得提：当你怀疑某个变换是不是自反的时候，<strong>直接拿明文跑一遍，看输出是不是密文</strong>。比推导逆变换快多了。</p>
+<p>另外，<code>KEY_TERM</code> 这个”完整性锚点”的设计挺有意思。它本质上是把二进制本身变成了密钥材料——你如果拿不到原始 ELF（比如只有内存 dump），或者 patch 了 <code>.data</code> 段的任何一个字节，解密就会全盘失败。但这种”绑定”在拿到了完整二进制文件之后就不起作用了，因为 24 字节常量是死的。</p>
+<p>这篇文章就到这儿。后面如果有时间，可能会再写写那个 NEON 壳框架的详细分析，以及 HTTP 解析器那块的一些发现。</p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/">https://brszzz.github.io/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/ARM64/">ARM64</a><a class="post-meta__tags" href="/tags/Python/">Python</a><a class="post-meta__tags" href="/tags/%E5%8F%8D%E6%B7%B7%E6%B7%86/">反混淆</a><a class="post-meta__tags" href="/tags/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a><a class="post-meta__tags" href="/tags/ELF/">ELF</a><a class="post-meta__tags" href="/tags/IDA-Pro/">IDA-Pro</a><a class="post-meta__tags" href="/tags/Android/">Android</a><a class="post-meta__tags" href="/tags/%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86/">字符串加密</a><a class="post-meta__tags" href="/tags/%E6%B5%81%E5%AF%86%E7%A0%81/">流密码</a><a class="post-meta__tags" href="/tags/%E5%8A%A0%E5%A3%B3/">加壳</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/" title="记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</div></div><div class="info-2"><div class="info-item-1">目标样本为 Virbox Protector 加壳的 ARM64 ELF，使用 Unicorn 模拟执行在 PC 上几秒完成脱壳。本文还原壳的 aPLib/NRV LZ77 解码器、双层加载结构、伪 ELF 魔数等细节，并详述 hook mprotect 作为脱壳信号的核心策略。</div></div></div></a><a class="pagination-related" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="领域特定虚拟机DSVM指令完整还原"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">领域特定虚拟机DSVM指令完整还原</div></div><div class="info-2"><div class="info-item-1">本文记录了对一款伪装为 shell 脚本的 ARM64 ELF 外挂文件进行深度逆向分析的完整过程。从初始 OLLVM 控制流平坦化误判出发，通过 PAC 序言检测、字节码协议发现和 12 调度器架构分析，最终揭示其真实面目为一个针对 UE4 移动游戏对象遍历的领域特定虚拟机（DSVM）。文章详述了 Capstone + Unicorn 工具链的工程实践、790 个操作码的语义提取，以及恶意代码检测的全流程。</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/" title="记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-23</div><div class="info-item-2">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</div></div><div class="info-2"><div class="info-item-1">目标样本为 Virbox Protector 加壳的 ARM64 ELF，使用 Unicorn 模拟执行在 PC 上几秒完成脱壳。本文还原壳的 aPLib/NRV LZ77 解码器、双层加载结构、伪 ELF 魔数等细节，并详述 hook mprotect 作为脱壳信号的核心策略。</div></div></div></a><a class="pagination-related" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="领域特定虚拟机DSVM指令完整还原"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-21</div><div class="info-item-2">领域特定虚拟机DSVM指令完整还原</div></div><div class="info-2"><div class="info-item-1">本文记录了对一款伪装为 shell 脚本的 ARM64 ELF 外挂文件进行深度逆向分析的完整过程。从初始 OLLVM 控制流平坦化误判出发，通过 PAC 序言检测、字节码协议发现和 12 调度器架构分析，最终揭示其真实面目为一个针对 UE4 移动游戏对象遍历的领域特定虚拟机（DSVM）。文章详述了 Capstone + Unicorn 工具链的工程实践、790 个操作码的语义提取，以及恶意代码检测的全流程。</div></div></div></a><a class="pagination-related" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</div></div><div class="info-2"><div class="info-item-1">记录一次完整的 Android 游戏外挂逆向分析过程，从被误判的"加密"疑点出发，通过 OLLVM 去混淆、TBZ 寄存器分析和 maps 对比，还原基于 shadowhook 框架的注入架构</div></div></div></a><a class="pagination-related" href="/2026/06/04/vm_rw_detect_analysis/" title="ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗</div></div><div class="info-2"><div class="info-item-1">系统研究 Android ARM64 平台上跨进程内存读写的可检测性，覆盖 mincore 自检、PerfEvent 跨通道测序、PMU 硬件计数器、kprobes 内核挂钩等十余种检测方法，分析各方案的优缺点与对抗手段。</div></div></div></a><a class="pagination-related" href="/2026/04/29/52pojie-2105428-AI%E9%80%86%E5%90%91%E4%BD%BF%E7%94%A8CCdeepseekv4%E5%88%86%E6%9E%90%E5%AE%89%E5%8D%93ELF%E5%A4%96%E6%8C%82%E6%A0%B7%E6%9C%AC/" title="AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-04-29</div><div class="info-item-2">AI逆向，使用CC+deepseekv4分析安卓ELF外挂样本</div></div><div class="info-2"><div class="info-item-1">## AI逆向，使用Claude Code+deepseekv4分析安卓ELF外挂样本  ### 1. 引言  本文记录了一次完整的安卓 ELF（.so）外挂样本逆向分析过程。样本是一个面向某 UE4 射击游戏的游戏作弊模块，基于 Unreal Engine 4 引擎开发。 传统逆向工程依赖人工阅读反汇编代码、逐条追踪指令流，分析周期通常以天甚至周计。本文展示如何利用 **AI 辅助逆向** 工作</div></div></div></a><a class="pagination-related" href="/2026/06/04/kernel_read_detect/" title="内核驱动级内存读写的用户层检测与绕过——一次攻防对抗实践"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">内核驱动级内存读写的用户层检测与绕过——一次攻防对抗实践</div></div><div class="info-2"><div class="info-item-1">在 ARM64 Android 平台上构建内核驱动内存读写检测 Demo，防御端通过 5 种用户态手段检测外部内存访问，攻击端从 access_process_vm 演进为物理内存直读，记录完整的攻防对抗过程。</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">35</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">132</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#ELF-%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91"><span class="toc-text">ELF 二进制字符串加密的逆向</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#0-%E5%85%88%E8%AF%B4%E8%AF%B4%E8%BF%99%E4%B8%9C%E8%A5%BF%E9%95%BF%E4%BB%80%E4%B9%88%E6%A0%B7"><span class="toc-text">0. 先说说这东西长什么样</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#1-%E4%BB%8E%E2%80%9D%E6%89%BE%E4%B8%8D%E5%88%B0%E5%AD%97%E7%AC%A6%E4%B8%B2%E2%80%9D%E8%AF%B4%E8%B5%B7"><span class="toc-text">1. 从”找不到字符串”说起</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#2-%E8%BF%BD%E8%A7%A3%E5%AF%86%E5%87%BD%E6%95%B0"><span class="toc-text">2. 追解密函数</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-%E4%B8%89%E5%B1%82%E8%B0%83%E7%94%A8%E9%93%BE"><span class="toc-text">2.1 三层调用链</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-2-%E6%89%BE%E5%88%B0%E2%80%9D%E5%AE%8C%E6%95%B4%E6%80%A7%E9%94%9A%E7%82%B9%E2%80%9D-KEY-TERM"><span class="toc-text">2.2 找到”完整性锚点” KEY_TERM</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-3-%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95-sub-10F408%EF%BC%9A%E5%8F%8C-pass-%E6%B5%81%E5%AF%86%E7%A0%81"><span class="toc-text">2.3 核心算法 sub_10F408：双 pass 流密码</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#Pass-1%EF%BC%9A%E5%8F%8C%E7%8A%B6%E6%80%81%E6%9C%BA%E6%AD%A3%E5%90%91-%E5%8F%8D%E5%90%91%E4%BA%A4%E6%9B%BF"><span class="toc-text">Pass 1：双状态机正向 + 反向交替</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Pass-2%EF%BC%9A%E7%AC%AC%E4%BA%8C%E9%81%8D%EF%BC%8C%E5%BC%95%E5%85%A5%E5%87%8F%E6%B3%95"><span class="toc-text">Pass 2：第二遍，引入减法</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-4-%E9%AA%8C%E8%AF%81%EF%BC%9A%E8%BF%99%E4%B8%AA%E5%8F%98%E6%8D%A2%E6%98%AF%E8%87%AA%E5%8F%8D%E7%9A%84"><span class="toc-text">2.4 验证：这个变换是自反的</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#3-%E5%86%99-Python-%E8%A7%A3%E5%AF%86%E8%84%9A%E6%9C%AC"><span class="toc-text">3. 写 Python 解密脚本</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#3-1-%E5%A4%8D%E5%88%BB%E6%A0%B8%E5%BF%83%E7%AE%97%E6%B3%95"><span class="toc-text">3.1 复刻核心算法</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-2-%E5%A4%84%E7%90%86%E5%8F%8C%E6%AE%B5%E7%BB%93%E6%9E%84"><span class="toc-text">3.2 处理双段结构</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-3-%E5%86%99-IDAPython-%E6%89%B9%E9%87%8F%E6%89%AB%E6%8F%8F%E8%84%9A%E6%9C%AC"><span class="toc-text">3.3 写 IDAPython 批量扫描脚本</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#4-%E4%B8%BA%E4%BB%80%E4%B9%88%E8%BF%99%E5%A5%97%E4%BF%9D%E6%8A%A4%E2%80%9D%E4%B8%80%E5%87%BB%E5%B0%B1%E7%A2%8E%E2%80%9D"><span class="toc-text">4. 为什么这套保护”一击就碎”</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#5-%E9%A1%BA%E5%B8%A6%E5%8F%91%E7%8E%B0%E7%9A%84%E5%A3%B3%E6%A1%86%E6%9E%B6"><span class="toc-text">5. 顺带发现的壳框架</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#6-%E8%A7%A3%E5%AF%86%E7%BB%93%E6%9E%9C%E8%83%BD%E5%91%8A%E8%AF%89%E6%88%91%E4%BB%AC%E4%BB%80%E4%B9%88%EF%BC%88%E9%83%A8%E5%88%86%E7%A4%BA%E4%BE%8B%EF%BC%89"><span class="toc-text">6. 解密结果能告诉我们什么（部分示例）</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#7-%E6%80%BB%E7%BB%93%E4%B8%80%E4%B8%8B%E8%BF%99%E4%B8%AA%E8%BF%87%E7%A8%8B%E7%9A%84%E6%94%B6%E8%8E%B7"><span class="toc-text">7. 总结一下这个过程的收获</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/%E4%B8%80%E5%8F%AAARM64%E5%A3%B3%E7%9A%84%E4%B8%A4%E6%AC%A1Unicorn%E6%95%91%E5%9C%BA%E2%80%94%E2%80%94%E4%BB%8E%E5%8E%8B%E7%BC%A9%E5%A4%96%E5%A3%B3%E5%88%B0NEON-XOR%E5%AD%97%E7%AC%A6%E4%B8%B2/" title="一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串">一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串</a><time datetime="2026-06-23T12:16:00.000Z" title="发表于 2026-06-23 20:16:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/" title="记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</a><time datetime="2026-06-23T12:04:00.000Z" title="发表于 2026-06-23 20:04:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/" title="ELF 二进制字符串加密的逆向">ELF 二进制字符串加密的逆向</a><time datetime="2026-06-23T11:59:00.000Z" title="发表于 2026-06-23 19:59:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="领域特定虚拟机DSVM指令完整还原">领域特定虚拟机DSVM指令完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/" title="某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程">某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程</a><time datetime="2026-06-17T16:00:00.000Z" title="发表于 2026-06-18 00:00:00">2026-06-18</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('a.site-page[href="/video-player/"]').forEach(function(a){a.setAttribute('target','_blank');a.setAttribute('rel','noopener')})})</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

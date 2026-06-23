@@ -1,0 +1,480 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="dark"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录 | 黑岩的小屋</title><meta name="author" content="brszzz"><meta name="copyright" content="brszzz"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#0d0d0d"><meta name="description" content="目标样本为 Virbox Protector 加壳的 ARM64 ELF，使用 Unicorn 模拟执行在 PC 上几秒完成脱壳。本文还原壳的 aPLib&#x2F;NRV LZ77 解码器、双层加载结构、伪 ELF 魔数等细节，并详述 hook mprotect 作为脱壳信号的核心策略。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录">
+<meta property="og:url" content="https://brszzz.github.io/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/index.html">
+<meta property="og:site_name" content="黑岩的小屋">
+<meta property="og:description" content="目标样本为 Virbox Protector 加壳的 ARM64 ELF，使用 Unicorn 模拟执行在 PC 上几秒完成脱壳。本文还原壳的 aPLib&#x2F;NRV LZ77 解码器、双层加载结构、伪 ELF 魔数等细节，并详述 hook mprotect 作为脱壳信号的核心策略。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://brszzz.github.io/img/avatar.jpg">
+<meta property="article:published_time" content="2026-06-23T12:04:00.000Z">
+<meta property="article:modified_time" content="2026-06-23T12:25:16.000Z">
+<meta property="article:author" content="brszzz">
+<meta property="article:tag" content="脱壳">
+<meta property="article:tag" content="ARM64">
+<meta property="article:tag" content="Unicorn">
+<meta property="article:tag" content="逆向工程">
+<meta property="article:tag" content="ELF">
+<meta property="article:tag" content="Android">
+<meta property="article:tag" content="Virbox">
+<meta property="article:tag" content="aPLib">
+<meta property="article:tag" content="mprotect">
+<meta property="article:tag" content="模拟执行">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://brszzz.github.io/img/avatar.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录",
+  "url": "https://brszzz.github.io/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/",
+  "image": "https://brszzz.github.io/img/avatar.jpg",
+  "datePublished": "2026-06-23T12:04:00.000Z",
+  "dateModified": "2026-06-23T12:25:16.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "brszzz",
+      "url": "https://github.com/brszzz"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://brszzz.github.io/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":false,"top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta http-equiv="Cache-Control" content="no-cache"><style>#footer{background:rgba(77,77,77,.8)!important;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}.framework-info{display:none}.avatar-img img{transform:scale(1.15)}.avatar-img img:hover{transform:scale(1.15) rotate(360deg)}</style><meta name="generator" content="Hexo 7.3.0"></head><body><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">35</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">132</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div><div class="menus_item"><a class="site-page" href="/video-player/"><i class="fa-fw fas fa-play"></i><span> video player</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/banner.jpg);"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">黑岩的小屋</span></a><a class="nav-page-title" href="/"><span class="site-name">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  返回首页</span></span></a></span><div id="menus"><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> Home</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> Archives</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> Tags</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder"></i><span> Categories</span></a></div><div class="menus_item"><a class="site-page" href="/video-player/"><i class="fa-fw fas fa-play"></i><span> video player</span></a></div></div><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2026-06-23T12:04:00.000Z" title="发表于 2026-06-23 20:04:00">2026-06-23</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2026-06-23T12:25:16.000Z" title="更新于 2026-06-23 20:25:16">2026-06-23</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">27k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>1:37分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h1 id="记一次-ARM64-加壳程序的脱壳之旅-——-Unicorn-模拟执行的实战记录"><a href="#记一次-ARM64-加壳程序的脱壳之旅-——-Unicorn-模拟执行的实战记录" class="headerlink" title="记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录"></a>记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</h1><blockquote>
+<p>目标样本：一个伪装成 shell 脚本、实为 ARM64 ELF、被 <strong>Virbox Protector</strong>（深思数盾）加壳的 Android 程序。大小约 1.2 MB，脱完后真实 payload 大概 864 KB。整个过程在 PC 上几秒钟就能跑完，零真机、零反调试。</p>
+</blockquote>
+<hr>
+<h2 id="一、这东西是怎么被加壳的"><a href="#一、这东西是怎么被加壳的" class="headerlink" title="一、这东西是怎么被加壳的"></a>一、这东西是怎么被加壳的</h2><p>Virbox Protector 这个壳，跟 VMProtect、Themida 之类是同一类产品，只不过它更偏向 Linux &#x2F; Android native 平台。它对一个二进制能做的事一般分四档：</p>
+<table>
+<thead>
+<tr>
+<th>技术</th>
+<th>干啥用的</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>代码加壳&#x2F;压缩</td>
+<td>把原始 .text&#x2F;.data 压成位流，运行时再展开，让你静态反汇编啥也看不见</td>
+</tr>
+<tr>
+<td>代码虚拟化 (VM)</td>
+<td>把关键函数翻译成自定义字节码，脱了壳也只能看见 dispatcher 在跳来跳去</td>
+</tr>
+<tr>
+<td>反调试&#x2F;反 dump</td>
+<td>ptrace 检测、TLS callback、SIGTRAP 自捕获等等</td>
+</tr>
+<tr>
+<td>完整性校验</td>
+<td>CRC &#x2F; 哈希签名，防止你打补丁</td>
+</tr>
+</tbody></table>
+<p>这次碰到的样本只开了<strong>第一档——纯自解压壳</strong>，没有反调试也没有虚拟化。换句话说这是相对”轻量”的配置，Virbox 重度模式下会把 VM 字节码塞进 <code>.protect</code> 节、用一堆 SVC trap 做反调，那个才是硬骨头。</p>
+<hr>
+<h2 id="二、先看看壳长什么样"><a href="#二、先看看壳长什么样" class="headerlink" title="二、先看看壳长什么样"></a>二、先看看壳长什么样</h2><h3 id="2-1-ELF-布局"><a href="#2-1-ELF-布局" class="headerlink" title="2.1 ELF 布局"></a>2.1 ELF 布局</h3><p>用 <code>readelf</code> 看一眼，这 ELF 结构挺”干净”的：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">段           虚拟地址             权限    内容</span><br><span class="line">---          ----------           ----    -------------------------</span><br><span class="line">LOAD #1      0x0       - 0xeb458  RW      压缩后的 payload 位流</span><br><span class="line">LOAD #2      0xf0000   - 0x12c481 R+X     解压桩 (stub)</span><br></pre></td></tr></table></figure>
+
+<p>ELF 标自己是 DYN（PIE 共享对象），入口地址 <code>e_entry = 0x12B95C</code>，落在 LOAD #2 的末尾那几百字节。从外面看就是个普通 ELF，没有 UPX 那种明显的壳特征字符串，挺低调的。</p>
+<h3 id="2-2-桩里就那么几个函数"><a href="#2-2-桩里就那么几个函数" class="headerlink" title="2.2 桩里就那么几个函数"></a>2.2 桩里就那么几个函数</h3><p>整个 RX 段 IDA 只认出 5 个函数，加起来不到 600 字节：</p>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>干了什么</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0x12B95C</code> <code>start</code>（ELF入口）</td>
+<td>位流解压引擎，aPLib &#x2F; NRV 风格的 LZ77 解码器</td>
+</tr>
+<tr>
+<td><code>0x12BA0C</code></td>
+<td>1-bit 位流读取器——一个同名复用的精巧小函数</td>
+</tr>
+<tr>
+<td><code>0x12BBBC</code></td>
+<td><code>mmap</code> 系统调用包装（<code>SVC 0, w8=222</code>）</td>
+</tr>
+<tr>
+<td><code>0x12BBD0</code></td>
+<td>小型加载器：mmap → 调解码器 → mprotect → BR 跳到真实入口</td>
+</tr>
+<tr>
+<td><code>0x12BC60</code></td>
+<td>NULL 终止指针数组扫描，用来跨过 <code>argv[]</code> &#x2F; <code>envp[]</code></td>
+</tr>
+<tr>
+<td><code>0x12BC6C</code>（子例程）</td>
+<td>真正的 bootstrap：解析 auxv → openat 自己 → 调度 mmap</td>
+</tr>
+</tbody></table>
+<h3 id="2-3-字符串特征"><a href="#2-3-字符串特征" class="headerlink" title="2.3 字符串特征"></a>2.3 字符串特征</h3><p>唯一的明显标识在 <code>0x12bb00</code>：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">roteVirbox Protector</span><br></pre></td></tr></table></figure>
+
+<p>开头被截了一截，完整应该是 “Powered by Virbox Protector” 之类的。其他可见字符串像 <code>/proc/self/exe</code>、<code>/system/bin/linker64</code>、<code>Android</code>、<code>r17</code>（NDK r17 编译的痕迹）都是壳运行时要用的常量，跟业务逻辑没任何关系。</p>
+<hr>
+<h2 id="三、壳是怎么跑起来的——运行流程还原"><a href="#三、壳是怎么跑起来的——运行流程还原" class="headerlink" title="三、壳是怎么跑起来的——运行流程还原"></a>三、壳是怎么跑起来的——运行流程还原</h2><p>把桩反汇编走一遍，整个运行时间线可以还原成 7 步：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br></pre></td><td class="code"><pre><span class="line">[1] ELF entry 0x12B95C</span><br><span class="line">        ↓</span><br><span class="line">    LDR W19, =0x22                  ; 保存&quot;压缩长度&quot;常量</span><br><span class="line">    BL  0x12BC6C                    ; LR = 0x12B964（后面解码器入口）</span><br><span class="line">        ↓</span><br><span class="line">[2] 0x12BC6C  bootstrap</span><br><span class="line">    MOV  X24, X30                   ; X24 = 解码器入口 0x12B964（后面 BLR X24 用）</span><br><span class="line">    MOV  X0, SP</span><br><span class="line">    BL  sub_12BC60                  ; 跳过 argv[] → X0 = &amp;envp[0]</span><br><span class="line">    BL  sub_12BC60                  ; 跳过 envp[] → X0 = &amp;auxv[0]</span><br><span class="line">        ↓</span><br><span class="line">[3] auxv 扫描</span><br><span class="line">    LDP  X1, X2, [X0],#0x10</span><br><span class="line">    CMP  W1, #6                     ; AT_PAGESZ</span><br><span class="line">    B.EQ ...                        ; 取出 page size → X26 = -pagesize</span><br><span class="line">        ↓</span><br><span class="line">[4] openat(AT_FDCWD, &quot;/proc/self/exe&quot;, O_RDONLY)</span><br><span class="line">    SYS_openat = 56                 ; fd 存进 W27</span><br><span class="line">        ↓</span><br><span class="line">[5] sub_12BBD0:</span><br><span class="line">    A) mmap(NULL, size, PROT_RW, MAP_ANON|MAP_PRIVATE, -1, 0)</span><br><span class="line">       → 拿一块 RW 缓冲（本例 0x1000 字节）</span><br><span class="line">    B) BLR X24                       ; ← 跳进 0x12B964 处的解码器</span><br><span class="line">       解码器把 LOAD#1 段里的位流解到刚 mmap 出来的缓冲</span><br><span class="line">    C) mprotect(buf, len, PROT_R|PROT_X)</span><br><span class="line">       (SYS_mprotect = 226, prot = 5)</span><br><span class="line">        ↓</span><br><span class="line">[6] DC CVAU / IC IVAU / DSB ISH / ISB</span><br><span class="line">    ; ARM64 必备的 D-cache → I-cache 一致性同步</span><br><span class="line">    ; 不刷的话 CPU 可能还在执行旧的指令</span><br><span class="line">        ↓</span><br><span class="line">[7] BR X0</span><br><span class="line">    ; ← 跳到刚解出来的代码入口，正式离开壳的代码</span><br></pre></td></tr></table></figure>
+
+<p>第 [7] 步就是经典的”OEP 跳转”（Original Entry Point）。从这一刻起，程序活在 mmap 出来的那块 RWX 内存里，跟磁盘上的 ELF 文件彻底说拜拜。</p>
+<h3 id="3-1-解码器核心——一个精巧的-6-条指令的位流读取器"><a href="#3-1-解码器核心——一个精巧的-6-条指令的位流读取器" class="headerlink" title="3.1 解码器核心——一个精巧的 6 条指令的位流读取器"></a>3.1 解码器核心——一个精巧的 6 条指令的位流读取器</h3><p><code>0x12BA0C</code> 是整个解码器的心脏，只有 6 条指令：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">sub_12BA0C:</span><br><span class="line">    ADDS W4, W4, W4         ; 把 32-bit 位累加器左移，最高位输出到 CF</span><br><span class="line">    CBZ  W4, refill         ; 累加器空了则去补</span><br><span class="line">    RET                     ; CF = 这次读出的 bit</span><br><span class="line">refill:</span><br><span class="line">    LDR  W4, [X0],#4        ; 从输入流再吃 32 bit</span><br><span class="line">    ADCS W4, W4, W4         ; 顺便把第一个 bit 拿出来</span><br><span class="line">    RET</span><br></pre></td></tr></table></figure>
+
+<p>这 6 条指令实现了一个”按位读取”的小循环，通过进位标志 CF 返回每次读出的那个 bit。<code>start</code> 函数的主循环里反复调它：</p>
+<ul>
+<li>读一个 bit 决定：是输出字面量，还是做回向复制</li>
+<li>字面量分支：<code>LDRB W3,[X0],#1 ; STRB W3,[X2],#1</code>（直接拷字节）</li>
+<li>复制分支：用 <code>ADC W1, W1, W1</code> 反复积累位，做 Elias-Gamma 编码的长度解析</li>
+<li>偏移 ≥ 0x500 时自动 <code>length += 1</code>（<code>CMN W5, #0x500 ; CINC W1, W1, CC</code>）——这是 aPLib 的标志性优化</li>
+</ul>
+<p>这些特征跟 <strong>aPLib &#x2F; NRV2</strong> 系列压缩器完全一致。Virbox 在 ARM64 上选了这族算法做运行时解码引擎，好处是桩可以做到极小（不到 300 字节），解压还极快。</p>
+<h3 id="3-2-它是双层的"><a href="#3-2-它是双层的" class="headerlink" title="3.2 它是双层的"></a>3.2 它是双层的</h3><p>一次脱壳还不够。这个样本是<strong>双层结构</strong>：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">壳第 1 层（在磁盘 ELF 里）:</span><br><span class="line">   mmap → 解出 0xa68 字节的 &quot;用户态 ELF loader&quot; → mprotect R+X → BR 进入</span><br><span class="line"></span><br><span class="line">壳第 2 层（Layer 1 自己）:</span><br><span class="line">   一个完整的 mini-dl_loader:</span><br><span class="line">   - 复用同一个 0x12B95C 解码器（再次 BL 进去）</span><br><span class="line">   - 把另一段位流解到新 mmap 的 0xd3000 字节区</span><br><span class="line">   - 自己解析 ELF program headers</span><br><span class="line">   - 对每个 PT_LOAD 做 mmap + mprotect</span><br><span class="line">   - 最后跳到内部 ELF 的 e_entry</span><br></pre></td></tr></table></figure>
+
+<p>第二层解出来的<strong>才是真正的业务程序</strong>——一个标准 Android <code>e_type=DYN</code> 共享对象，<code>INTERP=/system/bin/linker64</code>，链接 <code>libc/libdl/liblog/libz/libm</code>，有完整的 dynamic symbol 表。</p>
+<h3 id="3-3-一个小迷惑技巧：伪-ELF-魔数"><a href="#3-3-一个小迷惑技巧：伪-ELF-魔数" class="headerlink" title="3.3 一个小迷惑技巧：伪 ELF 魔数"></a>3.3 一个小迷惑技巧：伪 ELF 魔数</h3><p>解出来的 inner ELF，第 4 个字节被动了手脚：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">正常 ELF:    7F 45 4C 46 02 01 01 00 ...</span><br><span class="line">本样本解出:  0A 00 67 46 02 01 01 00 ...   ← 前 4 字节是垃圾</span><br></pre></td></tr></table></figure>
+
+<p>后面 60 字节是完全合法的 ELF header。这是 Virbox 用来对抗”内存扫描 <code>7F 45 4C 46</code> 找脱壳产物”的小招数——真实的 magic 由壳在 <code>BR X0</code> 之前的某条指令动态修复，静态 dump 的时候如果不知道这一点，会以为这块内存”不是 ELF”，从而错过。</p>
+<p>破解方法简单粗暴：**把前 4 字节强制改回 <code>7F 45 4C 46</code>**，文件就完整可识别了。</p>
+<hr>
+<h2 id="四、写脱壳脚本——基于-Unicorn-的模拟执行方案"><a href="#四、写脱壳脚本——基于-Unicorn-的模拟执行方案" class="headerlink" title="四、写脱壳脚本——基于 Unicorn 的模拟执行方案"></a>四、写脱壳脚本——基于 Unicorn 的模拟执行方案</h2><h3 id="4-1-为什么选-Unicorn"><a href="#4-1-为什么选-Unicorn" class="headerlink" title="4.1 为什么选 Unicorn"></a>4.1 为什么选 Unicorn</h3><p>先盘一下几种常见的脱壳路子：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>真机 + Frida hook <code>mprotect</code></td>
+<td>真实环境</td>
+<td>要 root，可能被反 Frida 检测</td>
+</tr>
+<tr>
+<td><code>gdb</code> + <code>dlopen</code> 调试</td>
+<td>经典</td>
+<td>桩里如果有 <code>ptrace(PTRACE_TRACEME)</code> 就死</td>
+</tr>
+<tr>
+<td>内存搜索 dump</td>
+<td>简单</td>
+<td>不知道什么时候该 dump，还要绕 SELinux</td>
+</tr>
+<tr>
+<td><strong>Unicorn 模拟</strong></td>
+<td><strong>沙箱、可控、无需设备</strong></td>
+<td>要自己实现 syscall 桩</td>
+</tr>
+</tbody></table>
+<p>这个样本的桩里只有 3 个真正的 syscall —— <code>openat</code> &#x2F; <code>mmap</code> &#x2F; <code>mprotect</code>，其余指令全是纯计算 + 位流 + 内存拷贝。把这 3 个 syscall hook 掉，壳的所有”对外接触”就被完全控制了。Unicorn 方案简直是为这种情况量身定做的。</p>
+<h3 id="4-2-脚本开发的完整思路"><a href="#4-2-脚本开发的完整思路" class="headerlink" title="4.2 脚本开发的完整思路"></a>4.2 脚本开发的完整思路</h3><h4 id="Step-1-——-按-program-header-加载-ELF"><a href="#Step-1-——-按-program-header-加载-ELF" class="headerlink" title="Step 1 —— 按 program header 加载 ELF"></a>Step 1 —— 按 program header 加载 ELF</h4><p>别把整个文件平铺到 base 0，那样 entry <code>0x12B95C</code> 处会读到垃圾。必须按 PT_LOAD 的 <code>vaddr / offset / filesz</code> 把两段精确映射到 Unicorn 的虚拟地址空间：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> vaddr, off, filesz, memsz, flags <span class="keyword">in</span> loads:</span><br><span class="line">    uc.mem_map(vaddr &amp; ~<span class="number">0xfff</span>, align_up(memsz), UC_PROT_ALL)</span><br><span class="line">    uc.mem_write(vaddr, elf_raw[off:off+filesz])</span><br></pre></td></tr></table></figure>
+
+<h4 id="Step-2-——-伪造启动栈"><a href="#Step-2-——-伪造启动栈" class="headerlink" title="Step 2 —— 伪造启动栈"></a>Step 2 —— 伪造启动栈</h4><p>桩第一件事就是从 SP 读栈，扫 <code>argv → envp → auxv</code>，所以必须给它搭一个标准的 Linux entry 栈：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">push_words([</span><br><span class="line">    <span class="number">1</span>,                       <span class="comment"># argc</span></span><br><span class="line">    ARGV0_ADDR, <span class="number">0</span>,           <span class="comment"># argv[0], argv NULL</span></span><br><span class="line">    <span class="number">0</span>,                       <span class="comment"># envp NULL</span></span><br><span class="line">    <span class="number">6</span>, <span class="number">0x1000</span>,               <span class="comment"># AT_PAGESZ</span></span><br><span class="line">    <span class="number">25</span>, ARGV0_ADDR,          <span class="comment"># AT_RANDOM</span></span><br><span class="line">    <span class="number">31</span>, ARGV0_ADDR,          <span class="comment"># AT_EXECFN</span></span><br><span class="line">    <span class="number">0</span>, <span class="number">0</span>,                    <span class="comment"># AT_NULL</span></span><br><span class="line">])</span><br></pre></td></tr></table></figure>
+
+<p>不搭也能凑合（壳里有 <code>0x10000</code> 的 fallback），但<strong>至少要保证 argv&#x2F;envp 各以一个 NULL 终止</strong>，不然 <code>sub_12BC60</code> 会扫越界跑飞。</p>
+<h4 id="Step-3-——-从-ELF-entry-开跑，别从-bootstrap-开跑"><a href="#Step-3-——-从-ELF-entry-开跑，别从-bootstrap-开跑" class="headerlink" title="Step 3 —— 从 ELF entry 开跑，别从 bootstrap 开跑"></a>Step 3 —— 从 ELF entry 开跑，别从 bootstrap 开跑</h4><p>这是一个<strong>很容易踩的坑</strong>。如果直接从 <code>0x12BC6C</code> 开始模拟，<code>X24/X30</code> 都是 0，后面 <code>BLR X24</code> 会跳到 0 崩溃。正确做法：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">uc.emu_start(<span class="number">0x12B95C</span>, <span class="number">0</span>)    <span class="comment"># 真·入口</span></span><br></pre></td></tr></table></figure>
+
+<p>因为 <code>start</code> 第一条 <code>BL 0x12BC6C</code> 会把 <code>LR=0x12B964</code> 设好，bootstrap 才能 <code>MOV X24, X30</code> 拿到正确的解码器回调地址。这个依赖链我当时踩坑了才想明白。</p>
+<h4 id="Step-4-——-Hook-三大-syscall，mprotect-是关键"><a href="#Step-4-——-Hook-三大-syscall，mprotect-是关键" class="headerlink" title="Step 4 —— Hook 三大 syscall，mprotect 是关键"></a>Step 4 —— Hook 三大 syscall，mprotect 是关键</h4><figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">def</span> <span class="title function_">svc_handler</span>(<span class="params">uc</span>):</span><br><span class="line">    x8 = uc.reg_read(UC_ARM64_REG_X8)</span><br><span class="line">    <span class="keyword">if</span> x8 == <span class="number">56</span>:    <span class="comment"># openat(&quot;/proc/self/exe&quot;)</span></span><br><span class="line">        <span class="comment"># 返回一个我们控制的假 fd</span></span><br><span class="line">        uc.reg_write(UC_ARM64_REG_X0, fake_fd)</span><br><span class="line">    <span class="keyword">elif</span> x8 == <span class="number">222</span>: <span class="comment"># mmap</span></span><br><span class="line">        <span class="comment"># 在 0x10_0000_0000 之上自增分配</span></span><br><span class="line">        a = alloc(length)</span><br><span class="line">        uc.mem_map(a, length, UC_PROT_ALL)</span><br><span class="line">        uc.reg_write(UC_ARM64_REG_X0, a)</span><br><span class="line">    <span class="keyword">elif</span> x8 == <span class="number">226</span>: <span class="comment"># mprotect  ← ★ 关键！</span></span><br><span class="line">        <span class="comment"># 一旦有人把内存改成可执行，立刻 dump！</span></span><br><span class="line">        addr, length, prot = ...</span><br><span class="line">        <span class="keyword">if</span> prot &amp; PROT_EXEC:</span><br><span class="line">            data = <span class="built_in">bytes</span>(uc.mem_read(addr, length))</span><br><span class="line">            <span class="keyword">with</span> <span class="built_in">open</span>(<span class="string">f&quot;exec_<span class="subst">&#123;addr:<span class="number">0</span>10x&#125;</span>_sz<span class="subst">&#123;length:x&#125;</span>.bin&quot;</span>, <span class="string">&quot;wb&quot;</span>) <span class="keyword">as</span> f:</span><br><span class="line">                f.write(data)</span><br><span class="line">        uc.reg_write(UC_ARM64_REG_X0, <span class="number">0</span>)</span><br></pre></td></tr></table></figure>
+
+<p>这里的核心逻辑是：**<code>mprotect → R+X</code> 就是脱壳点的金标准信号**。任何加密 &#x2F; 压缩 &#x2F; VM-loader，只要把内存改成可执行，就意味着”我接下来要在这块内存里跑代码了”——这时候 dump 一定能拿到原始机器码。这个信号是 ABI 级别绕不开的，不是这个壳特有的弱点。</p>
+<h4 id="Step-5-——-让-Layer-1-也跑完，需要更多-syscall-桩"><a href="#Step-5-——-让-Layer-1-也跑完，需要更多-syscall-桩" class="headerlink" title="Step 5 —— 让 Layer 1 也跑完，需要更多 syscall 桩"></a>Step 5 —— 让 Layer 1 也跑完，需要更多 syscall 桩</h4><p>第一次 <code>mprotect</code> 只解出来 4 KB 的 Layer 1 loader。<strong>别急着停</strong>，继续模拟：</p>
+<ul>
+<li>Layer 1 会再次 mmap &#x2F; mprotect 一块约 836 KB 的内存 → 这才是真正的 payload</li>
+<li>它需要 <code>readlinkat(&quot;/proc/self/exe&quot;)</code> &#x2F; <code>getrandom</code> &#x2F; <code>brk</code> 等更多 syscall，<strong>全部实现 stub</strong></li>
+<li>最终它会 <code>openat(&quot;/system/bin/linker64&quot;)</code> 找不到链接器，自己 <code>exit_group(127)</code> 退出——此时 payload 已经完整就位</li>
+</ul>
+<p>额外需要实现的 syscall 桩：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">SYSCALL_STUBS = &#123;</span><br><span class="line">    <span class="number">62</span>:  <span class="string">&quot;lseek&quot;</span>,     <span class="number">63</span>: <span class="string">&quot;read&quot;</span>,      <span class="number">64</span>: <span class="string">&quot;write&quot;</span>,</span><br><span class="line">    <span class="number">78</span>:  <span class="string">&quot;readlinkat&quot;</span>,</span><br><span class="line">    <span class="number">93</span>:  <span class="string">&quot;exit&quot;</span>,      <span class="number">94</span>: <span class="string">&quot;exit_group&quot;</span>,</span><br><span class="line">    <span class="number">160</span>: <span class="string">&quot;uname&quot;</span>,     <span class="number">167</span>: <span class="string">&quot;prctl&quot;</span>,</span><br><span class="line">    <span class="number">173</span>: <span class="string">&quot;getrandom&quot;</span>, <span class="number">214</span>: <span class="string">&quot;brk&quot;</span>,      <span class="number">215</span>: <span class="string">&quot;munmap&quot;</span>,</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>每个都要返回合理的成功值，不然壳跑到一半会出错退掉。比如 <code>readlinkat</code> 要返回 <code>&quot;./vmp.sh&quot;</code> 的链接内容，<code>getrandom</code> 就填伪随机字节，<code>uname</code> 返回一个假的 <code>aarch64</code> 系统信息。意思到了就行，壳不会较真。</p>
+<h4 id="Step-6-——-修复伪-ELF-魔数"><a href="#Step-6-——-修复伪-ELF-魔数" class="headerlink" title="Step 6 —— 修复伪 ELF 魔数"></a>Step 6 —— 修复伪 ELF 魔数</h4><p>dump 出来的文件前 4 字节是 <code>0A 00 67 46</code>，改回去：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">data = <span class="built_in">bytearray</span>(<span class="built_in">open</span>(<span class="string">&#x27;exec_1000011000_szd3000.bin&#x27;</span>, <span class="string">&#x27;rb&#x27;</span>).read())</span><br><span class="line">data[:<span class="number">4</span>] = <span class="string">b&#x27;\x7fELF&#x27;</span>             <span class="comment"># 把 0A 00 67 46 改回 7F 45 4C 46</span></span><br><span class="line"><span class="built_in">open</span>(<span class="string">&#x27;unpacked.elf&#x27;</span>, <span class="string">&#x27;wb&#x27;</span>).write(<span class="built_in">bytes</span>(data))</span><br></pre></td></tr></table></figure>
+
+<p>修好后 <code>readelf -l unpacked.elf</code> 就能看到完整的 9 个 program header，<code>file</code> 也会正确识别成 AArch64 共享对象。</p>
+<h4 id="Step-7-——-扔进-IDA-分析"><a href="#Step-7-——-扔进-IDA-分析" class="headerlink" title="Step 7 —— 扔进 IDA 分析"></a>Step 7 —— 扔进 IDA 分析</h4><p>把修好的 <code>unpacked.elf</code> 拖进 IDA &#x2F; Ghidra，从 <code>e_entry=0xFD7C</code> 开始读。<code>__libc_init</code> 之后的 <code>main</code> 里就是真正的业务逻辑了。到这一步，加壳保护已经被完全剥掉，剩下的就是正常的逆向分析工作。</p>
+<blockquote>
+<p>一个小缺憾：LOAD #2 的数据段（<code>.data</code> &#x2F; <code>.got</code> 等，vaddr <code>0xe3a68</code> 长 <code>0x79f0</code>）在退出时还没被填充（动态链接器没跑，relocations 没做），所以 dump 出来是全 0。对静态分析影响不大——重要的指针都在重定位表里，IDA 会自动解析。</p>
+</blockquote>
+<hr>
+<h2 id="五、为什么-Unicorn-能秒杀这种壳"><a href="#五、为什么-Unicorn-能秒杀这种壳" class="headerlink" title="五、为什么 Unicorn 能秒杀这种壳"></a>五、为什么 Unicorn 能秒杀这种壳</h2><p>回顾一下壳的设计假设和 Unicorn 破解时的现实之间的差距：</p>
+<table>
+<thead>
+<tr>
+<th>壳的设计假设</th>
+<th>Unicorn 破解时的现实</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>“通过 <code>ptrace(PTRACE_TRACEME)</code> 抢占调试器”</td>
+<td>我根本不是调试器，我是 CPU 模拟器，壳无法察觉</td>
+</tr>
+<tr>
+<td>“通过读 <code>/proc/self/status</code> 看 <code>TracerPid != 0</code>“</td>
+<td>我可以让 <code>openat /proc/self/status</code> 返回任意我想要的字符串</td>
+</tr>
+<tr>
+<td>“Cache 一致性指令在用户态会触发 SIGILL”</td>
+<td>Unicorn 把 <code>DC CVAU</code> &#x2F; <code>IC IVAU</code> 当 NOP 直接跑过去</td>
+</tr>
+<tr>
+<td>“<code>mprotect</code> 是必须的系统调用，绕不开”</td>
+<td><strong>正因为绕不开，它就是脱壳的”红外感应”，我蹲在那儿就行</strong></td>
+</tr>
+<tr>
+<td>“ELF 文件被压缩，静态分析看不到任何业务代码”</td>
+<td>让壳自己解给我看，我只负责 dump</td>
+</tr>
+</tbody></table>
+<p>一句话总结：</p>
+<blockquote>
+<p><strong>任何想在用户态执行解压后代码的壳，都必然会调用 <code>mprotect(_, _, PROT_EXEC)</code>。这是 ABI 级的约束，只要钩住它，就能拿到任意 packer 的脱壳产物。</strong></p>
+</blockquote>
+<p>对这个样本而言，<strong>整个脱壳没有用到任何”破解”——它只是模拟硬件，让壳自己把代码摆好给我们看</strong>。</p>
+<hr>
+<h2 id="六、脚本跑起来的效果"><a href="#六、脚本跑起来的效果" class="headerlink" title="六、脚本跑起来的效果"></a>六、脚本跑起来的效果</h2><p>完整脚本大概 370 行 Python（主要都在 syscall 桩的处理上）。在 PC 上跑一次几秒钟，产出物：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">unpacked/xxx_unpacked.elf          ← 864 KB，可直接 IDA 加载</span><br><span class="line">unpacked/exec_1000000000_sza68.bin ← Layer 1 loader（调试参考）</span><br><span class="line">unpacked/exec_1000011000_szd3000.bin ← Layer 2 原始 dump（未修魔数）</span><br><span class="line">unpacked/final_*.bin               ← 退出时所有 mmap 区快照</span><br></pre></td></tr></table></figure>
+
+<hr>
+<h2 id="七、如果碰到-Virbox-的重度配置怎么办"><a href="#七、如果碰到-Virbox-的重度配置怎么办" class="headerlink" title="七、如果碰到 Virbox 的重度配置怎么办"></a>七、如果碰到 Virbox 的重度配置怎么办</h2><p>这次的样本只用了轻量模式。生产环境里 Virbox 还可以叠加更多保护，届时 Unicorn 方案需要相应补丁：</p>
+<table>
+<thead>
+<tr>
+<th>增强保护</th>
+<th>现象</th>
+<th>对策</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>反调试 syscall</strong></td>
+<td>桩里调用 <code>ptrace(PTRACE_TRACEME)</code>、读 <code>/proc/self/status</code></td>
+<td>在 syscall hook 里假装”我们不是被 trace 的”</td>
+</tr>
+<tr>
+<td><strong>TSC &#x2F; 时间检测</strong></td>
+<td>反复 <code>clock_gettime</code> 看间隔异常长 → 判定被模拟</td>
+<td>在 hook 里返回线性增长且增量真实的时间戳</td>
+</tr>
+<tr>
+<td><strong>CRC self-check</strong></td>
+<td>桩跳到 OEP 前先 hash 自身代码段</td>
+<td>不动桩，只在外面观察，本来就不会触发</td>
+</tr>
+<tr>
+<td><strong>VM 字节码</strong></td>
+<td>OEP 后第一条指令就是 <code>BR Xn</code> 进入 VM dispatcher</td>
+<td><strong>Unicorn 救不了你</strong>，需要重建 VM handler 表 → 翻译回原生 ARM64</td>
+</tr>
+<tr>
+<td><strong>TLS callback</strong></td>
+<td>在 <code>__libc_init</code> 之前的 <code>.init_array</code> 里偷偷再解一层</td>
+<td>把模拟跑到 <code>main</code> 之前更晚的位置再 dump</td>
+</tr>
+<tr>
+<td><strong>SIGTRAP 自捕获</strong></td>
+<td>故意触发 BRK，在自己注册的 signal handler 里做关键判断</td>
+<td>在 Unicorn 里实现 <code>kill -SIGTRAP</code> 的等价模拟，接管 sigaction</td>
+</tr>
+</tbody></table>
+<p>最难啃的是<strong>代码虚拟化</strong>——一旦关键函数被翻译成 VM 字节码，静态 dump 出来的只是一堆 dispatcher 循环，<strong>没有 ARM64 业务指令可读</strong>。脱壳只能解决”壳”的部分，VM 还得另外做 devirtualization，那是另一个故事了。</p>
+<hr>
+<h2 id="八、小结"><a href="#八、小结" class="headerlink" title="八、小结"></a>八、小结</h2><p>回到这次实践，几个关键点：</p>
+<ol>
+<li><strong>壳的本质就是把原始 ELF 用 aPLib 风格 LZ 压成位流，运行时 mmap → 解压 → mprotect → BR 跳入</strong>，理解了这个模式，脱壳思路就有了</li>
+<li><strong>双层结构比较常见</strong>——第一次解出来的是 loader，第二次才是真身</li>
+<li><strong><code>mprotect(R+X)</code> 是脱壳的万能信号</strong>——hook 住它，蹲点 dump</li>
+<li><strong>Unicorn 模拟执行是处理纯自解压壳的最干净手段</strong>——不是破解，只是让壳帮我跑了它本该跑的流程</li>
+<li>脱完别忘了检查魔数——作者可能会耍些小花样，比如把 <code>ELF</code> 魔数改掉</li>
+<li>碰上开启了 VM 虚拟化的重度壳，Unicorn 只能帮你脱到 VM 那层，反虚拟化是另一个维度的战斗</li>
+</ol>
+<p>整个过程说到底就一句话：<strong>壳想藏代码，但它总得在某个时刻把代码解出来跑，那个时刻就是你的机会。</strong></p>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a target="_blank" rel="noopener" href="https://github.com/brszzz">brszzz</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://brszzz.github.io/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/">https://brszzz.github.io/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://brszzz.github.io" target="_blank">黑岩的小屋</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/%E8%84%B1%E5%A3%B3/">脱壳</a><a class="post-meta__tags" href="/tags/ARM64/">ARM64</a><a class="post-meta__tags" href="/tags/Unicorn/">Unicorn</a><a class="post-meta__tags" href="/tags/%E9%80%86%E5%90%91%E5%B7%A5%E7%A8%8B/">逆向工程</a><a class="post-meta__tags" href="/tags/ELF/">ELF</a><a class="post-meta__tags" href="/tags/Android/">Android</a><a class="post-meta__tags" href="/tags/Virbox/">Virbox</a><a class="post-meta__tags" href="/tags/aPLib/">aPLib</a><a class="post-meta__tags" href="/tags/mprotect/">mprotect</a><a class="post-meta__tags" href="/tags/%E6%A8%A1%E6%8B%9F%E6%89%A7%E8%A1%8C/">模拟执行</a></div><div class="post-share"><div class="social-share" data-image="/img/avatar.jpg" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/2026/06/23/%E4%B8%80%E5%8F%AAARM64%E5%A3%B3%E7%9A%84%E4%B8%A4%E6%AC%A1Unicorn%E6%95%91%E5%9C%BA%E2%80%94%E2%80%94%E4%BB%8E%E5%8E%8B%E7%BC%A9%E5%A4%96%E5%A3%B3%E5%88%B0NEON-XOR%E5%AD%97%E7%AC%A6%E4%B8%B2/" title="一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串</div></div><div class="info-2"><div class="info-item-1">同一把刀削两层皮。Phase 1 用 Unicorn 模拟脱掉自解压外壳拿到原 ELF，Phase 2 再用 Unicorn 把里面 800+ 处 NEON XOR 字符串混淆全捞出来。两阶段共 450 行 Python，75 秒完成。</div></div></div></a><a class="pagination-related" href="/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/" title="ELF 二进制字符串加密的逆向"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">ELF 二进制字符串加密的逆向</div></div><div class="info-2"><div class="info-item-1">逆向一个 Android ARM64 ELF 的自定义字符串加密方案，还原双 pass 流密码算法（含 KEY_TERM 完整性锚点机制），写 Python 脚本一次性解密全部 956 条字符串。顺带发现一个 NEON 加壳框架。</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>相关推荐</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2026/05/25/android-game-cheat-reverse/" title="深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-05-25</div><div class="info-item-2">深入解析 23MB 的&quot;加密&quot;迷雾：一次 Android 游戏外挂的完整逆向之旅</div></div><div class="info-2"><div class="info-item-1">记录一次完整的 Android 游戏外挂逆向分析过程，从被误判的"加密"疑点出发，通过 OLLVM 去混淆、TBZ 寄存器分析和 maps 对比，还原基于 shadowhook 框架的注入架构</div></div></div></a><a class="pagination-related" href="/2026/06/23/%E4%B8%80%E5%8F%AAARM64%E5%A3%B3%E7%9A%84%E4%B8%A4%E6%AC%A1Unicorn%E6%95%91%E5%9C%BA%E2%80%94%E2%80%94%E4%BB%8E%E5%8E%8B%E7%BC%A9%E5%A4%96%E5%A3%B3%E5%88%B0NEON-XOR%E5%AD%97%E7%AC%A6%E4%B8%B2/" title="一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-23</div><div class="info-item-2">一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串</div></div><div class="info-2"><div class="info-item-1">同一把刀削两层皮。Phase 1 用 Unicorn 模拟脱掉自解压外壳拿到原 ELF，Phase 2 再用 Unicorn 把里面 800+ 处 NEON XOR 字符串混淆全捞出来。两阶段共 450 行 Python，75 秒完成。</div></div></div></a><a class="pagination-related" href="/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/" title="ELF 二进制字符串加密的逆向"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-23</div><div class="info-item-2">ELF 二进制字符串加密的逆向</div></div><div class="info-2"><div class="info-item-1">逆向一个 Android ARM64 ELF 的自定义字符串加密方案，还原双 pass 流密码算法（含 KEY_TERM 完整性锚点机制），写 Python 脚本一次性解密全部 956 条字符串。顺带发现一个 NEON 加壳框架。</div></div></div></a><a class="pagination-related" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="领域特定虚拟机DSVM指令完整还原"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-21</div><div class="info-item-2">领域特定虚拟机DSVM指令完整还原</div></div><div class="info-2"><div class="info-item-1">本文记录了对一款伪装为 shell 脚本的 ARM64 ELF 外挂文件进行深度逆向分析的完整过程。从初始 OLLVM 控制流平坦化误判出发，通过 PAC 序言检测、字节码协议发现和 12 调度器架构分析，最终揭示其真实面目为一个针对 UE4 移动游戏对象遍历的领域特定虚拟机（DSVM）。文章详述了 Capstone + Unicorn 工具链的工程实践、790 个操作码的语义提取，以及恶意代码检测的全流程。</div></div></div></a><a class="pagination-related" href="/2026/06/04/vm_rw_detect_analysis/" title="ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">ARM64 Android 跨进程内存读写检测——方法、缺陷与对抗</div></div><div class="info-2"><div class="info-item-1">系统研究 Android ARM64 平台上跨进程内存读写的可检测性，覆盖 mincore 自检、PerfEvent 跨通道测序、PMU 硬件计数器、kprobes 内核挂钩等十余种检测方法，分析各方案的优缺点与对抗手段。</div></div></div></a><a class="pagination-related" href="/2026/06/04/kernel_read_detect/" title="内核驱动级内存读写的用户层检测与绕过——一次攻防对抗实践"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-06-04</div><div class="info-item-2">内核驱动级内存读写的用户层检测与绕过——一次攻防对抗实践</div></div><div class="info-2"><div class="info-item-1">在 ARM64 Android 平台上构建内核驱动内存读写检测 Demo，防御端通过 5 种用户态手段检测外部内存访问，攻击端从 access_process_vm 演进为物理内存直读，记录完整的攻防对抗过程。</div></div></div></a></div></div><hr class="custom-hr"/><div id="post-comment"><div class="comment-head"><div class="comment-headline"><i class="fas fa-comments fa-fw"></i><span> 评论</span></div></div><div class="comment-wrap"><div><div id="utterances-wrap"></div></div></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/avatar.jpg" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">brszzz</div><div class="author-info-description">A personal blog</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">35</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">132</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">8</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/brszzz"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/brszzz" target="_blank" title="fab fa-github"><i class="GitHub" style="color: #24292e;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content">BLACK★ROCK SHOOTER</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E8%AE%B0%E4%B8%80%E6%AC%A1-ARM64-%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85-%E2%80%94%E2%80%94-Unicorn-%E6%A8%A1%E6%8B%9F%E6%89%A7%E8%A1%8C%E7%9A%84%E5%AE%9E%E6%88%98%E8%AE%B0%E5%BD%95"><span class="toc-text">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E8%BF%99%E4%B8%9C%E8%A5%BF%E6%98%AF%E6%80%8E%E4%B9%88%E8%A2%AB%E5%8A%A0%E5%A3%B3%E7%9A%84"><span class="toc-text">一、这东西是怎么被加壳的</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81%E5%85%88%E7%9C%8B%E7%9C%8B%E5%A3%B3%E9%95%BF%E4%BB%80%E4%B9%88%E6%A0%B7"><span class="toc-text">二、先看看壳长什么样</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-ELF-%E5%B8%83%E5%B1%80"><span class="toc-text">2.1 ELF 布局</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-2-%E6%A1%A9%E9%87%8C%E5%B0%B1%E9%82%A3%E4%B9%88%E5%87%A0%E4%B8%AA%E5%87%BD%E6%95%B0"><span class="toc-text">2.2 桩里就那么几个函数</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-3-%E5%AD%97%E7%AC%A6%E4%B8%B2%E7%89%B9%E5%BE%81"><span class="toc-text">2.3 字符串特征</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81%E5%A3%B3%E6%98%AF%E6%80%8E%E4%B9%88%E8%B7%91%E8%B5%B7%E6%9D%A5%E7%9A%84%E2%80%94%E2%80%94%E8%BF%90%E8%A1%8C%E6%B5%81%E7%A8%8B%E8%BF%98%E5%8E%9F"><span class="toc-text">三、壳是怎么跑起来的——运行流程还原</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#3-1-%E8%A7%A3%E7%A0%81%E5%99%A8%E6%A0%B8%E5%BF%83%E2%80%94%E2%80%94%E4%B8%80%E4%B8%AA%E7%B2%BE%E5%B7%A7%E7%9A%84-6-%E6%9D%A1%E6%8C%87%E4%BB%A4%E7%9A%84%E4%BD%8D%E6%B5%81%E8%AF%BB%E5%8F%96%E5%99%A8"><span class="toc-text">3.1 解码器核心——一个精巧的 6 条指令的位流读取器</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-2-%E5%AE%83%E6%98%AF%E5%8F%8C%E5%B1%82%E7%9A%84"><span class="toc-text">3.2 它是双层的</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-3-%E4%B8%80%E4%B8%AA%E5%B0%8F%E8%BF%B7%E6%83%91%E6%8A%80%E5%B7%A7%EF%BC%9A%E4%BC%AA-ELF-%E9%AD%94%E6%95%B0"><span class="toc-text">3.3 一个小迷惑技巧：伪 ELF 魔数</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81%E5%86%99%E8%84%B1%E5%A3%B3%E8%84%9A%E6%9C%AC%E2%80%94%E2%80%94%E5%9F%BA%E4%BA%8E-Unicorn-%E7%9A%84%E6%A8%A1%E6%8B%9F%E6%89%A7%E8%A1%8C%E6%96%B9%E6%A1%88"><span class="toc-text">四、写脱壳脚本——基于 Unicorn 的模拟执行方案</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#4-1-%E4%B8%BA%E4%BB%80%E4%B9%88%E9%80%89-Unicorn"><span class="toc-text">4.1 为什么选 Unicorn</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-2-%E8%84%9A%E6%9C%AC%E5%BC%80%E5%8F%91%E7%9A%84%E5%AE%8C%E6%95%B4%E6%80%9D%E8%B7%AF"><span class="toc-text">4.2 脚本开发的完整思路</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#Step-1-%E2%80%94%E2%80%94-%E6%8C%89-program-header-%E5%8A%A0%E8%BD%BD-ELF"><span class="toc-text">Step 1 —— 按 program header 加载 ELF</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Step-2-%E2%80%94%E2%80%94-%E4%BC%AA%E9%80%A0%E5%90%AF%E5%8A%A8%E6%A0%88"><span class="toc-text">Step 2 —— 伪造启动栈</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Step-3-%E2%80%94%E2%80%94-%E4%BB%8E-ELF-entry-%E5%BC%80%E8%B7%91%EF%BC%8C%E5%88%AB%E4%BB%8E-bootstrap-%E5%BC%80%E8%B7%91"><span class="toc-text">Step 3 —— 从 ELF entry 开跑，别从 bootstrap 开跑</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Step-4-%E2%80%94%E2%80%94-Hook-%E4%B8%89%E5%A4%A7-syscall%EF%BC%8Cmprotect-%E6%98%AF%E5%85%B3%E9%94%AE"><span class="toc-text">Step 4 —— Hook 三大 syscall，mprotect 是关键</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Step-5-%E2%80%94%E2%80%94-%E8%AE%A9-Layer-1-%E4%B9%9F%E8%B7%91%E5%AE%8C%EF%BC%8C%E9%9C%80%E8%A6%81%E6%9B%B4%E5%A4%9A-syscall-%E6%A1%A9"><span class="toc-text">Step 5 —— 让 Layer 1 也跑完，需要更多 syscall 桩</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Step-6-%E2%80%94%E2%80%94-%E4%BF%AE%E5%A4%8D%E4%BC%AA-ELF-%E9%AD%94%E6%95%B0"><span class="toc-text">Step 6 —— 修复伪 ELF 魔数</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Step-7-%E2%80%94%E2%80%94-%E6%89%94%E8%BF%9B-IDA-%E5%88%86%E6%9E%90"><span class="toc-text">Step 7 —— 扔进 IDA 分析</span></a></li></ol></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81%E4%B8%BA%E4%BB%80%E4%B9%88-Unicorn-%E8%83%BD%E7%A7%92%E6%9D%80%E8%BF%99%E7%A7%8D%E5%A3%B3"><span class="toc-text">五、为什么 Unicorn 能秒杀这种壳</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81%E8%84%9A%E6%9C%AC%E8%B7%91%E8%B5%B7%E6%9D%A5%E7%9A%84%E6%95%88%E6%9E%9C"><span class="toc-text">六、脚本跑起来的效果</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%83%E3%80%81%E5%A6%82%E6%9E%9C%E7%A2%B0%E5%88%B0-Virbox-%E7%9A%84%E9%87%8D%E5%BA%A6%E9%85%8D%E7%BD%AE%E6%80%8E%E4%B9%88%E5%8A%9E"><span class="toc-text">七、如果碰到 Virbox 的重度配置怎么办</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AB%E3%80%81%E5%B0%8F%E7%BB%93"><span class="toc-text">八、小结</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/%E4%B8%80%E5%8F%AAARM64%E5%A3%B3%E7%9A%84%E4%B8%A4%E6%AC%A1Unicorn%E6%95%91%E5%9C%BA%E2%80%94%E2%80%94%E4%BB%8E%E5%8E%8B%E7%BC%A9%E5%A4%96%E5%A3%B3%E5%88%B0NEON-XOR%E5%AD%97%E7%AC%A6%E4%B8%B2/" title="一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串">一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串</a><time datetime="2026-06-23T12:16:00.000Z" title="发表于 2026-06-23 20:16:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/%E8%AE%B0%E4%B8%80%E6%AC%A1ARM64%E5%8A%A0%E5%A3%B3%E7%A8%8B%E5%BA%8F%E7%9A%84%E8%84%B1%E5%A3%B3%E4%B9%8B%E6%97%85/" title="记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录">记一次 ARM64 加壳程序的脱壳之旅 —— Unicorn 模拟执行的实战记录</a><time datetime="2026-06-23T12:04:00.000Z" title="发表于 2026-06-23 20:04:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/23/ELF%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%AD%97%E7%AC%A6%E4%B8%B2%E5%8A%A0%E5%AF%86%E7%9A%84%E9%80%86%E5%90%91/" title="ELF 二进制字符串加密的逆向">ELF 二进制字符串加密的逆向</a><time datetime="2026-06-23T11:59:00.000Z" title="发表于 2026-06-23 19:59:00">2026-06-23</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/21/DSVM%E9%80%86%E5%90%91-%E4%BB%8EOLLVM%E8%AF%AF%E5%88%A4%E5%88%B0%E9%A2%86%E5%9F%9F%E7%89%B9%E5%AE%9A%E8%99%9A%E6%8B%9F%E6%9C%BA%E5%AE%8C%E6%95%B4%E8%BF%98%E5%8E%9F/" title="领域特定虚拟机DSVM指令完整还原">领域特定虚拟机DSVM指令完整还原</a><time datetime="2026-06-21T04:00:00.000Z" title="发表于 2026-06-21 12:00:00">2026-06-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/06/18/dfm-global-libUE4-FName%E8%A7%A3%E5%AF%86%E4%B8%8EFNamePool%E5%AE%9A%E4%BD%8D/" title="某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程">某 UE4 手游 libUE4.so —— FName 解密与 FNamePool 定位全过程</a><time datetime="2026-06-17T16:00:00.000Z" title="发表于 2026-06-18 00:00:00">2026-06-18</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2026 By brszzz</span><span class="framework-info"><span>框架 </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 7.3.0</a><span class="footer-separator">|</span><span>主题 </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><a id="to_comment" href="#post-comment" title="前往评论"><i class="fas fa-comments"></i></a><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"><script>(() => {
+  const isShuoshuo = GLOBAL_CONFIG_SITE.pageType === 'shuoshuo'
+  const option = null
+  const getUtterancesTheme = theme => theme === 'dark' ? 'dark-blue' : 'github-light'
+
+  const loadUtterances = (el = document, key) => {
+    if (isShuoshuo) {
+      window.shuoshuoComment.destroyUtterances = () => {
+        if (el.children.length) {
+          el.innerHTML = ''
+          el.classList.add('no-comment')
+        }
+      }
+    }
+
+    const config = {
+      src: 'https://utteranc.es/client.js',
+      repo: 'brszzz/brszzz.github.io',
+      theme: getUtterancesTheme(document.documentElement.getAttribute('data-theme')),
+      crossorigin: 'anonymous',
+      async: true,
+      ...option,
+      'issue-term': isShuoshuo ? key : (option && option['issue-term']) || 'pathname'
+    }
+
+    const ele = document.createElement('script')
+    Object.entries(config).forEach(([key, value]) => ele.setAttribute(key, value))
+    el.querySelector('#utterances-wrap').appendChild(ele)
+  }
+
+  const changeUtterancesTheme = theme => {
+    const iframe = document.querySelector('#utterances-wrap iframe')
+    if (iframe) {
+      const message = {
+        type: 'set-theme',
+        theme: getUtterancesTheme(theme)
+      };
+      iframe.contentWindow.postMessage(message, 'https://utteranc.es')
+    }
+  }
+
+  btf.addGlobalFn('themeChange', changeUtterancesTheme, 'utterances')
+
+  if (isShuoshuo) {
+    'Utterances' === 'Utterances'
+      ? window.shuoshuoComment = { loadComment: loadUtterances }
+      : window.loadOtherComment = loadUtterances
+    return
+  }
+  
+  if ('Utterances' === 'Utterances' || !true) {
+    if (true) btf.loadComment(document.getElementById('utterances-wrap'), loadUtterances)
+    else loadUtterances()
+  } else {
+    window.loadOtherComment = loadUtterances
+  }
+})()</script></div><script>(function(){var t;try{var d=JSON.parse(localStorage.getItem('theme'));if(d&&d.expiry>Date.now())t=d.value}catch(e){}document.documentElement.setAttribute('data-theme',t||'dark')})()</script><script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('a.site-page[href="/video-player/"]').forEach(function(a){a.setAttribute('target','_blank');a.setAttribute('rel','noopener')})})</script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="搜索文章..." type="text"/></div><hr/><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js?v=5.5.4"></script></div></div></body></html>

@@ -1,0 +1,1494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Video Player</title>
+<link rel="icon" type="image/png" href="/img/favicon.png">
+<script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #0a0a0a;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    user-select: none; -webkit-user-select: none;
+}
+#app { display: flex; justify-content: center; width: 100%; height: 100vh; }
+
+/* ---- Folder Overlay ---- */
+#folder-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.85);
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center; gap: 16px;
+}
+#folder-overlay .icon { font-size: 64px; margin-bottom: 8px; }
+#folder-overlay h2 { font-size: 20px; font-weight: 500; color: #fff; }
+#folder-overlay p { font-size: 13px; color: #999; }
+#select-folder-btn {
+    padding: 14px 40px; font-size: 16px;
+    background: #4ecdc4; color: #0a0a0a; border: none;
+    border-radius: 8px; cursor: pointer; font-weight: 600;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+#select-folder-btn:hover {
+    transform: scale(1.04);
+    box-shadow: 0 0 24px rgba(78,205,196,0.4);
+}
+#file-info { font-size: 12px; color: #666; margin-top: 8px; }
+
+/* ---- Player Container ---- */
+#player-container {
+    display: none; flex-direction: column;
+    width: 100%; max-width: 1400px;
+    height: 100vh; max-height: 100vh;
+}
+#video-wrapper {
+    position: relative; flex: 1; min-height: 0;
+    background: #000; border-radius: 8px 8px 0 0; overflow: hidden;
+}
+#video {
+    display: block; width: 100%; height: 100%;
+    object-fit: contain;
+}
+#danmaku-canvas {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%; pointer-events: none;
+}
+
+/* ---- Loading ---- */
+#loading {
+    position: absolute; inset: 0; z-index: 10;
+    display: none; justify-content: center; align-items: center;
+    background: rgba(0,0,0,0.6);
+}
+#loading.active { display: flex; }
+#loading .spinner {
+    width: 40px; height: 40px;
+    border: 3px solid rgba(255,255,255,0.2);
+    border-top-color: #4ecdc4;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- Control Bar ---- */
+#control-bar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px; background: #141414;
+    border-radius: 0 0 8px 8px;
+    height: 44px; font-size: 13px; flex-shrink: 0;
+    transition: opacity 0.3s ease;
+}
+#control-bar button {
+    background: none; border: none; color: #ccc;
+    cursor: pointer; font-size: 16px; line-height: 1;
+    padding: 4px 8px; border-radius: 4px;
+    transition: color 0.1s, background 0.1s;
+    white-space: nowrap;
+}
+/* Fullscreen: control bar overlays video, auto-hides */
+#player-container:fullscreen #control-bar {
+    position: absolute; bottom: 0; left: 0; right: 0; z-index: 20;
+    border-radius: 0;
+    background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.7) 60%, transparent 100%);
+    height: 56px; padding-top: 16px;
+}
+#player-container:fullscreen #control-bar.hidden {
+    opacity: 0; pointer-events: none;
+}
+#player-container:fullscreen #video-wrapper.idle-cursor {
+    cursor: none;
+}
+#control-bar button:hover { color: #fff; background: rgba(255,255,255,0.08); }
+#play-btn { width: 32px; text-align: center; }
+#time-display { color: #aaa; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---- Progress Bar ---- */
+#progress-container {
+    flex: 1; height: 20px; display: flex; align-items: center;
+    cursor: pointer; position: relative;
+}
+#progress-track {
+    width: 100%; height: 4px; background: rgba(255,255,255,0.15);
+    border-radius: 2px; position: relative; overflow: hidden;
+}
+#progress-buffered {
+    position: absolute; top: 0; left: 0; height: 100%;
+    background: rgba(255,255,255,0.2);
+    border-radius: 2px;
+}
+#progress-played {
+    position: absolute; top: 0; left: 0; height: 100%;
+    background: #4ecdc4; border-radius: 2px;
+}
+#progress-thumb {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    width: 14px; height: 14px; background: #4ecdc4;
+    border-radius: 50%; display: none;
+    box-shadow: 0 0 4px rgba(0,0,0,0.5);
+}
+#progress-container:hover #progress-thumb,
+#progress-container.dragging #progress-thumb { display: block; }
+#progress-container:hover #progress-track,
+#progress-container.dragging #progress-track { height: 6px; }
+
+#volume-slider {
+    width: 60px; accent-color: #4ecdc4;
+    height: 4px; cursor: pointer;
+}
+#danmaku-toggle { font-size: 13px !important; min-width: 40px; }
+#danmaku-toggle.off { color: #666 !important; }
+#settings-btn { font-size: 15px !important; }
+
+/* ---- Settings Panel ---- */
+#settings-panel {
+    display: none; position: fixed;
+    background: #1e1e1e; border: 1px solid #333;
+    border-radius: 8px; padding: 16px; z-index: 50;
+    width: 220px; font-size: 13px;
+}
+#settings-panel.show { display: block; }
+#settings-panel .setting-row {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+}
+#settings-panel .setting-row:last-child { margin-bottom: 0; }
+#settings-panel label { color: #bbb; flex-shrink: 0; margin-right: 8px; }
+#settings-panel input[type="range"] {
+    flex: 1; accent-color: #4ecdc4; height: 3px; cursor: pointer;
+}
+#settings-panel input[type="checkbox"] {
+    accent-color: #4ecdc4; cursor: pointer;
+}
+#settings-panel select {
+    background: #2a2a2a; color: #ddd; border: 1px solid #444;
+    border-radius: 4px; padding: 2px 6px; font-size: 12px;
+    cursor: pointer;
+}
+#settings-panel .val { color: #888; font-size: 11px; min-width: 32px; text-align: right; }
+
+/* ---- Keyboard hint ---- */
+#kbd-hint {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; color: #444; pointer-events: none;
+    display: none;
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+    <!-- Player config -->
+    <div id="folder-overlay">
+        <div class="icon">📁</div>
+        <h2>选择录制目录</h2>
+        <p>目录需包含 .flv 视频文件和 .danmaku.json.tmp 弹幕文件</p>
+        <button id="select-folder-btn">选择文件夹</button>
+        <div id="file-info"></div>
+    </div>
+
+    <!-- Player -->
+    <div id="player-container">
+        <div id="video-wrapper">
+            <video id="video"></video>
+            <canvas id="danmaku-canvas"></canvas>
+            <div id="loading"><div class="spinner"></div></div>
+        </div>
+        <div id="control-bar">
+            <button id="play-btn" title="播放/暂停 (Space)">▶</button>
+            <span id="time-display">00:00 / 00:00</span>
+            <div id="progress-container">
+                <div id="progress-track">
+                    <div id="progress-buffered"></div>
+                    <div id="progress-played"></div>
+                </div>
+                <div id="progress-thumb"></div>
+            </div>
+            <button id="mute-btn" title="静音 (M)">🔊</button>
+            <input type="range" id="volume-slider" min="0" max="100" value="80" title="音量">
+            <button id="danmaku-toggle" title="弹幕开关 (D)">弹幕</button>
+            <button id="settings-btn" title="弹幕设置">⚙</button>
+            <button id="folder-btn" title="切换文件夹">📁</button>
+            <button id="fullscreen-btn" title="全屏 (F)">⛶</button>
+        </div>
+
+        <!-- Danmaku Settings -->
+        <div id="settings-panel">
+            <div class="setting-row">
+                <label>字号</label>
+                <input type="range" id="setting-size" min="14" max="48" value="24">
+                <span class="val" id="val-size">24px</span>
+            </div>
+            <div class="setting-row">
+                <label>位置</label>
+                <select id="setting-position">
+                    <option value="full">全屏</option>
+                    <option value="top">上 1/3</option>
+                    <option value="middle">中 1/3</option>
+                    <option value="bottom">下 1/3</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label>透明度</label>
+                <input type="range" id="setting-opacity" min="10" max="100" value="80">
+                <span class="val" id="val-opacity">80%</span>
+            </div>
+            <div class="setting-row">
+                <label>密度</label>
+                <input type="range" id="setting-density" min="0" max="100" value="100">
+                <span class="val" id="val-density">100%</span>
+            </div>
+            <div class="setting-row">
+                <label>时间偏移</label>
+                <input type="range" id="setting-offset" min="-30" max="30" value="0" step="0.5">
+                <span class="val" id="val-offset">0s</span>
+            </div>
+            <div class="setting-row">
+                <label>显示时间</label>
+                <input type="checkbox" id="setting-showtime">
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="kbd-hint">Space 暂停 · D 弹幕开关 · M 静音 · ← → 快进快退</div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+const state = {
+    flvFile: null,
+    danmakuFile: null,
+    flvPlayer: null,
+    _segUrl: null,
+    _curBlobUrl: null,     // current blob URL for the player (may change on rebuild)
+    _flvHeader: null,      // cached FLV header bytes (first ~1024 bytes)
+    _timeOffset: 0,        // offset: actual video time = player time + offset
+    danmakuAll: [],        // all parsed danmaku, filtered by density
+    danmakuRaw: [],        // unfiltered danmaku data
+    danmakuActive: [],     // currently on-screen danmaku
+    danmakuIndex: 0,       // next danmaku to spawn (index into danmakuAll)
+    videoStartTs: 0,       // first danmaku's unix timestamp
+    isSeeking: false,
+    _estDuration: 0,
+    _rebuilding: false,
+    _pendingRebuild: null,
+    _rebuildSeekComp: false,
+    _seekResume: false,
+    playerInitialized: false,
+    resizeObserver: null,
+};
+
+const settings = {
+    fontSize: 24,
+    opacity: 0.8,
+    density: 1.0,
+    position: 'full',      // 'full' | 'top' | 'middle' | 'bottom'
+    offset: 0,             // seconds
+    showDanmaku: true,
+    showDanmakuTime: false,
+};
+
+const DANMAKU_SPEED = 200;  // pixels per second scroll speed
+
+// ============================================================
+// DOM refs
+// ============================================================
+const $ = id => document.getElementById(id);
+const folderOverlay = $('folder-overlay');
+const playerContainer = $('player-container');
+const video = $('video');
+const canvas = $('danmaku-canvas');
+const ctx = canvas.getContext('2d');
+const loadingEl = $('loading');
+const selectBtn = $('select-folder-btn');
+const fileInfo = $('file-info');
+const playBtn = $('play-btn');
+const timeDisplay = $('time-display');
+const progressContainer = $('progress-container');
+const progressBuffered = $('progress-buffered');
+const progressPlayed = $('progress-played');
+const progressThumb = $('progress-thumb');
+const muteBtn = $('mute-btn');
+const volumeSlider = $('volume-slider');
+const danmakuToggle = $('danmaku-toggle');
+const settingsBtn = $('settings-btn');
+const settingsPanel = $('settings-panel');
+const fullscreenBtn = $('fullscreen-btn');
+const folderBtn = $('folder-btn');
+const kbdHint = $('kbd-hint');
+
+// ============================================================
+// Folder Selection
+// ============================================================
+if (!window.showDirectoryPicker) {
+    selectBtn.textContent = '浏览器不支持';
+    selectBtn.style.opacity = '0.5';
+    selectBtn.style.pointerEvents = 'none';
+    document.querySelector('#folder-overlay p').textContent =
+        '请使用 Chrome 或 Edge 浏览器打开此页面';
+}
+
+selectBtn.addEventListener('click', selectFolder);
+
+async function selectFolder() {
+    try {
+        if (!window.showDirectoryPicker) {
+            alert('请使用 Chrome 或 Edge 浏览器。');
+            return;
+        }
+        const dirHandle = await window.showDirectoryPicker();
+        fileInfo.textContent = '正在扫描目录...';
+
+        const flvFiles = [];
+        const danmakuFiles = [];
+
+        for await (const [name, handle] of dirHandle.entries()) {
+            if (handle.kind !== 'file') continue;
+            const lower = name.toLowerCase();
+            if (lower.endsWith('.flv')) {
+                flvFiles.push({ name, handle });
+            } else if (lower.includes('danmaku') && (lower.endsWith('.tmp') || lower.endsWith('.json'))) {
+                danmakuFiles.push({ name, handle });
+            }
+        }
+
+        if (flvFiles.length === 0) {
+            fileInfo.textContent = '❌ 未找到 .flv 视频文件';
+            return;
+        }
+
+        // Clean up old player if re-selecting
+        if (state.playerInitialized) {
+            if (state.flvPlayer) {
+                try {
+                    state.flvPlayer.detachMediaElement();
+                    state.flvPlayer.destroy();
+                } catch (e) {}
+                state.flvPlayer = null;
+            }
+            if (state._curBlobUrl) {
+                URL.revokeObjectURL(state._curBlobUrl);
+                state._curBlobUrl = null;
+            }
+            if (video.srcObject) {
+                try {
+                    const ms = video.srcObject;
+                    if (ms.readyState === 'open') {
+                        const sbs = ms.sourceBuffers;
+                        while (sbs.length > 0) ms.removeSourceBuffer(sbs[0]);
+                    }
+                } catch (e) {}
+                video.srcObject = null;
+            }
+            video.removeAttribute('src');
+            video.load();
+            video.pause();
+            playBtn.textContent = '▶';
+        }
+
+        const flv = flvFiles[0];
+        const danmaku = danmakuFiles[0] || null;
+
+        state.flvFile = await flv.handle.getFile();
+        state.danmakuFile = danmaku ? await danmaku.handle.getFile() : null;
+        state._timeOffset = 0;
+        state._estDuration = 0;
+        state._rebuilding = false;
+        state._pendingRebuild = null;
+        state.danmakuAll = [];
+        state.danmakuRaw = [];
+        state.danmakuActive = [];
+        state.danmakuIndex = 0;
+        state.videoStartTs = 0;
+        state.isSeeking = false;
+
+        // Extract clean FLV init segment
+        state._flvHeader = await extractFlvInitSegment(state.flvFile);
+
+        fileInfo.textContent =
+            `✅ 视频: ${flv.name}` +
+            (danmaku ? `  ·  弹幕: ${danmaku.name}` : '  ·  ⚠ 未找到弹幕文件');
+
+        await new Promise(r => setTimeout(r, 400));
+
+        if (state.playerInitialized) {
+            // Re-init with new files
+            initPlayer();
+        } else {
+            state.playerInitialized = true;
+            folderOverlay.style.display = 'none';
+            playerContainer.style.display = 'flex';
+            initPlayer();
+        }
+    } catch (err) {
+        if (err.name !== 'AbortError') {
+            fileInfo.textContent = '❌ 错误: ' + err.message;
+        }
+    }
+}
+
+function setupVideoEvents() {
+    video.addEventListener('waiting', () => loadingEl.classList.add('active'));
+    video.addEventListener('canplay', () => loadingEl.classList.remove('active'));
+    video.addEventListener('playing', () => loadingEl.classList.remove('active'));
+    video.addEventListener('seeked', () => {
+        state.isSeeking = false;
+        // Compensate for flv.js auto-seek after rebuild ("stuck at 0" detection)
+        if (state._rebuildSeekComp) {
+            state._rebuildSeekComp = false;
+            const pt = (state.flvPlayer && isFinite(state.flvPlayer.currentTime))
+                ? state.flvPlayer.currentTime : video.currentTime;
+            if (pt > 0.5) {
+                state._timeOffset -= pt;
+                updateTimeDisplay();
+            }
+        }
+        onSeekComplete();
+        loadingEl.classList.remove('active');
+    });
+    video.addEventListener('seeking', () => { state.isSeeking = true; });
+    video.addEventListener('timeupdate', () => updateTimeDisplay());
+    video.addEventListener('play', () => { playBtn.textContent = '⏸'; });
+    video.addEventListener('pause', () => { playBtn.textContent = '▶'; });
+    video.addEventListener('ended', () => { playBtn.textContent = '▶'; });
+    video.addEventListener('volumechange', () => {
+        volumeSlider.value = Math.round(video.volume * 100);
+        updateMuteBtn();
+    });
+}
+
+// ============================================================
+// Video Player
+// ============================================================
+function initPlayer() {
+    video.volume = volumeSlider.value / 100;
+
+    if (typeof flvjs === 'undefined') {
+        alert('flv.js 加载失败，请检查网络连接。');
+        return;
+    }
+
+    if (!flvjs.isSupported()) {
+        alert('当前浏览器不支持 flv.js。请使用 Chrome 或 Edge。');
+        return;
+    }
+
+    const segUrl = URL.createObjectURL(state.flvFile);
+    state._curBlobUrl = segUrl;
+    state._timeOffset = 0;
+
+    state.flvPlayer = flvjs.createPlayer({
+        type: 'flv',
+        url: segUrl,
+        isLive: false,
+        hasAudio: true,
+        hasVideo: true,
+    });
+
+    state.flvPlayer.on(flvjs.Events.ERROR, (type, detail) => {
+        console.error('flv.js error:', type, detail);
+        loadingEl.classList.remove('active');
+    });
+    state.flvPlayer.on(flvjs.Events.LOADING_COMPLETE, () => {
+        console.log('flv.js loading complete');
+        loadingEl.classList.remove('active');
+    });
+    state.flvPlayer.on(flvjs.Events.METADATA_ARRIVED, (info) => {
+        if (!info.duration || !isFinite(info.duration)) {
+            state._estDuration = state.flvFile.size / 1000000;
+        } else {
+            state._estDuration = info.duration;
+        }
+        setupCanvas();
+        updateTimeDisplay();
+        video.play().catch(() => {});
+    });
+
+    state.flvPlayer.attachMediaElement(video);
+    state.flvPlayer.load();
+
+    setupVideoEvents();
+
+    video.addEventListener('loadedmetadata', () => {
+        updateTimeDisplay();
+        setupCanvas();
+    });
+
+    if (state.danmakuFile) {
+        loadDanmaku();
+    }
+
+    requestAnimationFrame(danmakuLoop);
+    setInterval(updateProgressBar, 200);
+    kbdHint.style.display = 'block';
+}
+
+// ============================================================
+// Canvas Setup
+// ============================================================
+function setupCanvas() {
+    const rect = video.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    const oldW = canvas.width / dpr;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    // If canvas size changed, reset active danmaku positions
+    if (Math.abs(oldW - rect.width) > 1) {
+        state.danmakuActive = [];
+        state.danmakuIndex = Math.max(0, state.danmakuIndex);
+    }
+}
+
+if (window.ResizeObserver) {
+    state.resizeObserver = new ResizeObserver(() => {
+        setupCanvas();
+    });
+    state.resizeObserver.observe(video);
+}
+
+window.addEventListener('resize', setupCanvas);
+
+// ============================================================
+// Danmaku Loading
+// ============================================================
+async function loadDanmaku() {
+    try {
+        const text = await state.danmakuFile.text();
+        let raw = [];
+
+        // Try nested JSON format first: { "events": [{...}, {...}] }
+        try {
+            const obj = JSON.parse(text);
+            if (obj.events && Array.isArray(obj.events)) {
+                for (const ev of obj.events) {
+                    if (ev.type === 'chat' && ev.content && ev.timestamp) {
+                        raw.push({
+                            nickname: ev.nickname || '',
+                            content: ev.content,
+                            timestamp: ev.timestamp,
+                        });
+                    }
+                }
+            }
+        } catch (e) {
+            // Not a single JSON object, try JSONL format
+        }
+
+        // Fallback: JSONL format (one JSON per line)
+        if (raw.length === 0) {
+            const lines = text.trim().split(/\r?\n/);
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                    const obj = JSON.parse(line);
+                    if (obj.type === 'chat' && obj.content && obj.timestamp) {
+                        raw.push({
+                            nickname: obj.nickname || '',
+                            content: obj.content,
+                            timestamp: obj.timestamp,
+                        });
+                    }
+                } catch (e) { /* skip malformed lines */ }
+            }
+        }
+
+        // Normalize timestamps: recording tool outputs milliseconds, but some
+        // danmaku files may use seconds. Detect and convert to seconds uniformly.
+        const isMs = raw.length > 0 && raw[0].timestamp > 1e12;
+        const tsScale = isMs ? 1000 : 1;
+        for (const d of raw) d.timestamp = d.timestamp / tsScale;
+
+        state.danmakuRaw = raw;
+        state.videoStartTs = raw[0]?.timestamp || 0;
+
+        // Refine duration estimate based on danmaku timestamps (more accurate than file-size guess)
+        if (raw.length > 0) {
+            const lastTime = raw[raw.length - 1].timestamp - state.videoStartTs;
+            if (lastTime > 0) {
+                state._estDuration = Math.max(state._estDuration || 0, lastTime + 5); // +5s buffer after last danmaku
+                updateTimeDisplay();
+            }
+        }
+
+        applyDanmakuDensity();
+    } catch (err) {
+        console.error('Failed to load danmaku:', err);
+    }
+}
+
+function applyDanmakuDensity() {
+    const raw = state.danmakuRaw;
+    if (settings.density >= 1) {
+        state.danmakuAll = raw.map(d => ({
+            ...d,
+            rawTime: d.timestamp - state.videoStartTs,
+            videoTime: d.timestamp - state.videoStartTs + settings.offset,
+        }));
+    } else {
+        state.danmakuAll = [];
+        for (let i = 0; i < raw.length; i++) {
+            if (Math.random() < settings.density) {
+                state.danmakuAll.push({
+                    ...raw[i],
+                    rawTime: raw[i].timestamp - state.videoStartTs,
+                    videoTime: raw[i].timestamp - state.videoStartTs + settings.offset,
+                });
+            }
+        }
+    }
+    state.danmakuIndex = 0;
+}
+
+// ============================================================
+// Danmaku Rendering
+// ============================================================
+function getLaneCount() {
+    const rect = video.getBoundingClientRect();
+    if (rect.height === 0) return 10;
+    const laneHeight = settings.fontSize * 1.5;
+    let totalLanes = Math.max(1, Math.floor(rect.height / laneHeight));
+
+    if (settings.position === 'top') {
+        totalLanes = Math.max(1, Math.floor(totalLanes / 3));
+    } else if (settings.position === 'middle') {
+        const third = Math.max(1, Math.floor(Math.floor(rect.height / laneHeight) / 3));
+        totalLanes = third;
+    } else if (settings.position === 'bottom') {
+        totalLanes = Math.max(1, Math.floor(totalLanes / 3));
+    }
+
+    return totalLanes;
+}
+
+function getLaneY(laneIndex) {
+    const rect = video.getBoundingClientRect();
+    const laneHeight = settings.fontSize * 1.5;
+    const totalLanes = Math.max(1, Math.floor(rect.height / laneHeight));
+    let startLane = 0;
+
+    if (settings.position === 'top') {
+        startLane = 0;
+    } else if (settings.position === 'middle') {
+        startLane = Math.floor(totalLanes / 3);
+    } else if (settings.position === 'bottom') {
+        startLane = Math.floor(totalLanes * 2 / 3);
+    }
+
+    return (startLane + laneIndex) * laneHeight + settings.fontSize * 0.9;
+}
+
+function spawnDanmaku(danmaku) {
+    const rect = video.getBoundingClientRect();
+    const canvasW = rect.width || canvas.width / (window.devicePixelRatio || 1);
+    const laneCount = getLaneCount();
+
+    ctx.font = `${settings.fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+    const prefix = settings.showDanmakuTime ? `[${formatTime(danmaku.rawTime)}] ` : '';
+    const text = prefix + danmaku.content;
+    const textWidth = ctx.measureText(text).width;
+
+    // Find the best lane: prefer empty, otherwise pick lane with most space
+    let bestLane = -1;
+    let bestRightEdge = -Infinity;
+
+    for (let i = 0; i < laneCount; i++) {
+        const lastInLane = state.danmakuActive
+            .filter(d => d.lane === i)
+            .at(-1);
+
+        if (!lastInLane) {
+            bestLane = i;
+            break; // empty lane — best choice
+        }
+
+        const lastRightEdge = lastInLane.x + lastInLane.textWidth;
+        if (lastRightEdge < canvasW - textWidth - 20) {
+            bestLane = i;
+            break; // lane has enough room behind the last danmaku
+        }
+
+        // Track lane where last danmaku is furthest along (leftmost x)
+        if (lastInLane.x > bestRightEdge) {
+            bestRightEdge = lastInLane.x;
+            bestLane = i;
+        }
+    }
+
+    if (bestLane === -1) bestLane = 0;
+
+    // Calculate start position: stagger behind last danmaku in this lane
+    let startX = canvasW;
+    const lastInBestLane = state.danmakuActive
+        .filter(d => d.lane === bestLane)
+        .at(-1);
+    if (lastInBestLane) {
+        const lastEdge = lastInBestLane.x + lastInBestLane.textWidth;
+        if (lastEdge > canvasW - textWidth - 20) {
+            startX = lastEdge + 10; // stagger behind the previous danmaku
+        }
+    }
+
+    state.danmakuActive.push({
+        ...danmaku,
+        text,
+        textWidth,
+        x: startX,
+        y: getLaneY(bestLane),
+        lane: bestLane,
+    });
+}
+
+let lastDanmakuTs = 0;
+
+function danmakuLoop(timestamp) {
+    if (!settings.showDanmaku) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // Redraw frozen danmaku even when hidden, in case they reappear
+        lastDanmakuTs = 0;
+        requestAnimationFrame(danmakuLoop);
+        return;
+    }
+
+    const rect = video.getBoundingClientRect();
+    const canvasW = rect.width || canvas.width / (window.devicePixelRatio || 1);
+    const canvasH = rect.height || canvas.height / (window.devicePixelRatio || 1);
+
+    if (canvasW === 0 || canvasH === 0 || !playerContainer.style.display || playerContainer.style.display === 'none') {
+        lastDanmakuTs = 0;
+        requestAnimationFrame(danmakuLoop);
+        return;
+    }
+
+    const currentTime = getCurrentTime();
+
+    // Spawn new danmaku (skip while paused or seeking)
+    if (!video.paused && !state.isSeeking && state.danmakuAll.length > 0) {
+        while (
+            state.danmakuIndex < state.danmakuAll.length &&
+            state.danmakuAll[state.danmakuIndex].videoTime <= currentTime
+        ) {
+            spawnDanmaku(state.danmakuAll[state.danmakuIndex]);
+            state.danmakuIndex++;
+        }
+    }
+
+    // Update positions only while playing; when paused, redraw at current positions
+    if (!video.paused) {
+        const dt = lastDanmakuTs ? Math.min((timestamp - lastDanmakuTs) / 1000, 0.1) : 1 / 60;
+        lastDanmakuTs = timestamp;
+
+        const activeAfterMove = [];
+        for (const d of state.danmakuActive) {
+            d.x -= DANMAKU_SPEED * dt;
+            if (d.x + d.textWidth >= -10) activeAfterMove.push(d);
+        }
+        state.danmakuActive = activeAfterMove;
+    } else {
+        lastDanmakuTs = 0;
+    }
+
+    // Always draw current state
+    ctx.clearRect(0, 0, canvasW, canvasH);
+    ctx.globalAlpha = settings.opacity;
+    ctx.font = `${settings.fontSize}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+    ctx.textBaseline = 'top';
+    ctx.lineWidth = Math.max(2, settings.fontSize / 8);
+    ctx.strokeStyle = '#000';
+    ctx.fillStyle = '#fff';
+
+    for (const d of state.danmakuActive) {
+        ctx.strokeText(d.text, d.x, d.y);
+        ctx.fillText(d.text, d.x, d.y);
+    }
+    ctx.globalAlpha = 1;
+
+    requestAnimationFrame(danmakuLoop);
+}
+
+function onSeekComplete() {
+    state.danmakuActive = [];
+
+    const currentTime = getCurrentTime();
+    const arr = state.danmakuAll;
+    let lo = 0, hi = arr.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (arr[mid].videoTime < currentTime) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    state.danmakuIndex = lo;
+}
+
+// ============================================================
+// Progress Bar
+// ============================================================
+function getDuration() {
+    if (state._estDuration > 0) return state._estDuration;
+    if (state.flvPlayer && isFinite(state.flvPlayer.duration) && state.flvPlayer.duration > 0)
+        return state.flvPlayer.duration;
+    return video.duration || 0;
+}
+function getCurrentTime() {
+    const playerTime = (state.flvPlayer && isFinite(state.flvPlayer.currentTime))
+        ? state.flvPlayer.currentTime : (video.currentTime || 0);
+    return playerTime + state._timeOffset;
+}
+
+function updateProgressBar() {
+    if (!state.flvPlayer || isDragging) return;
+
+    const duration = getDuration();
+    const currentTime = getCurrentTime();
+    const buffered = video.buffered;
+    let bufferedEnd = 0;
+
+    if (buffered && buffered.length > 0) {
+        bufferedEnd = buffered.end(buffered.length - 1);
+    }
+
+    if (duration > 0) {
+        progressPlayed.style.width = (currentTime / duration * 100) + '%';
+        progressBuffered.style.width = (bufferedEnd / duration * 100) + '%';
+        progressThumb.style.left = (currentTime / duration * 100) + '%';
+    }
+}
+
+function updateTimeDisplay() {
+    if (isDragging) return;
+    timeDisplay.textContent = formatTime(getCurrentTime()) + ' / ' + formatTime(getDuration());
+}
+
+function seekTo(time) {
+    const duration = getDuration();
+    if (duration <= 0 || !state.flvPlayer) return;
+    time = Math.max(0, Math.min(time, duration));
+
+    if (state._rebuilding) {
+        state._pendingRebuild = time;
+        return;
+    }
+
+    state.isSeeking = true;
+    state._rebuildSeekComp = false; // user-initiated seek, cancel rebuild compensation
+    loadingEl.classList.add('active');
+
+    // video.buffered is relative to the player timeline (0-based).
+    // time is actual video time. Convert to player-relative for comparison.
+    const playerTime = time - state._timeOffset;
+    const buffered = video.buffered;
+    let inRange = buffered.length > 0 && playerTime >= 0;
+    if (inRange) {
+        let covered = false;
+        for (let i = 0; i < buffered.length; i++) {
+            if (buffered.start(i) <= playerTime && buffered.end(i) >= playerTime) {
+                covered = true;
+                break;
+            }
+        }
+        inRange = covered;
+    }
+
+    if (inRange) {
+        // Within buffer — fast in-place seek (player-relative)
+        state.flvPlayer.currentTime = playerTime;
+    } else {
+        // Out of buffered range — rebuild player from target position
+        rebuildPlayerAt(time);
+    }
+}
+
+async function extractFlvInitSegment(file) {
+    // Read first 2MB to find initialization tags
+    const headSize = Math.min(2097152, file.size);
+    const head = await file.slice(0, headSize).arrayBuffer();
+    const view = new DataView(head);
+
+    // FLV header is exactly 13 bytes: 3 signature + 1 version + 1 flags + 4 headerSize + 4 prevTagSize
+    const flvHeader = head.slice(0, 13);
+    const parts = [flvHeader];
+    let pos = 13;
+
+    // PreviousTagSize of first tag is always 0
+    if (pos + 4 > head.byteLength) return flvHeader;
+    // Include the 4-byte PreviousTagSize(0) before first tag
+
+    let hasScript = false, hasVideoConfig = false, hasAudioConfig = false;
+
+    // pos points to the start of a tag (TagType byte). First tag starts at byte 13.
+    while (pos + 15 < head.byteLength && (!hasScript || !hasVideoConfig || !hasAudioConfig)) {
+        const tagStart = pos;
+        const tagType = view.getUint8(pos);
+        if (tagType !== 0x08 && tagType !== 0x09 && tagType !== 0x12) break;
+
+        const dataSize = (view.getUint8(pos + 1) << 16) | (view.getUint16(pos + 2, false));
+        if (dataSize <= 0 || dataSize > 5 * 1024 * 1024) break;
+
+        if (pos + 11 + dataSize + 4 > head.byteLength) break;
+
+        // tagEnd = past trailing PreviousTagSize = start of next tag
+        const tagEnd = pos + 11 + dataSize + 4;
+
+        let include = false;
+        if (tagType === 0x12 && !hasScript) {
+            hasScript = true;
+            include = true;
+        } else if (tagType === 0x09 && !hasVideoConfig) {
+            const frameInfo = view.getUint8(pos + 11);
+            const frameType = (frameInfo >> 4) & 0x0F;
+            const codecId = frameInfo & 0x0F;
+            // AVC sequence header: keyframe, AVC codec
+            if (frameType === 1 && codecId === 7 && dataSize < 8192) {
+                hasVideoConfig = true;
+                include = true;
+            }
+        } else if (tagType === 0x08 && !hasAudioConfig) {
+            const soundInfo = view.getUint8(pos + 11);
+            const soundFormat = (soundInfo >> 4) & 0x0F;
+            // AAC sequence header
+            if (soundFormat === 10 && dataSize < 512) {
+                hasAudioConfig = true;
+                include = true;
+            }
+        }
+
+        if (include) {
+            // Include complete tag record: TagType through trailing PreviousTagSize
+            parts.push(head.slice(tagStart, tagEnd));
+        }
+
+        pos = tagEnd;
+    }
+
+    // Concatenate parts
+    let totalLen = 0;
+    for (const p of parts) totalLen += p.byteLength;
+    const result = new Uint8Array(totalLen);
+    let off = 0;
+    for (const p of parts) {
+        result.set(new Uint8Array(p), off);
+        off += p.byteLength;
+    }
+    console.log('FLV init segment:', result.byteLength, 'bytes, script:', hasScript,
+        'videoConfig:', hasVideoConfig, 'audioConfig:', hasAudioConfig);
+    return result.buffer;
+}
+
+async function findFlvSyncPoint(file, approxByte) {
+    // Read a window around the estimated position to scan for a valid tag boundary.
+    // Use strict two-tag verification: validate two consecutive tags to filter out
+    // false positives from random bytes matching the tag pattern.
+    const SCAN_WINDOW = 262144; // 256KB window
+    const scanStart = Math.max(0, approxByte - SCAN_WINDOW / 2);
+    const scanEnd = Math.min(file.size, scanStart + SCAN_WINDOW);
+    const buffer = await file.slice(scanStart, scanEnd).arrayBuffer();
+    const view = new DataView(buffer);
+
+    const MAX_TAG_SIZE = 5 * 1024 * 1024;
+    const VALID_AUDIO_FORMATS = new Set([0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15]); // FLV audio formats
+    const VALID_VIDEO_CODECS = new Set([2, 3, 4, 5, 6, 7, 12]); // FLV video codec IDs
+
+    let best = { pos: approxByte, dist: Infinity };
+
+    for (let i = 0; i < buffer.byteLength - 30; i++) {
+        // --- First tag validation ---
+        const prevTagSize1 = view.getUint32(i, false);
+        if (prevTagSize1 !== 0 && (prevTagSize1 < 11 || prevTagSize1 > MAX_TAG_SIZE)) continue;
+
+        const tagType1 = view.getUint8(i + 4);
+        if (tagType1 !== 0x08 && tagType1 !== 0x09 && tagType1 !== 0x12) continue;
+
+        const dataSize1 = (view.getUint8(i + 5) << 16) | (view.getUint16(i + 6, false));
+        if (dataSize1 === 0 || dataSize1 > MAX_TAG_SIZE) continue;
+
+        // Validate tag content for audio/video types
+        const tagDataOff = i + 15;
+        if (tagDataOff >= buffer.byteLength) continue;
+        if (tagType1 === 0x08) {
+            const sf = (view.getUint8(tagDataOff) >> 4) & 0x0F;
+            if (!VALID_AUDIO_FORMATS.has(sf)) continue;
+        } else if (tagType1 === 0x09) {
+            const ft = (view.getUint8(tagDataOff) >> 4) & 0x0F;
+            const ci = view.getUint8(tagDataOff) & 0x0F;
+            if (ft > 5 || !VALID_VIDEO_CODECS.has(ci)) continue;
+        }
+
+        // --- Second tag validation ---
+        const nextTagOffset = i + 15 + dataSize1; // position of next PreviousTagSize
+        if (nextTagOffset + 16 > buffer.byteLength) continue;
+
+        const prevTagSize2 = view.getUint32(nextTagOffset, false);
+        // Second tag's PreviousTagSize must equal first tag's total size
+        if (prevTagSize2 !== 11 + dataSize1) continue;
+
+        const tagType2 = view.getUint8(nextTagOffset + 4);
+        if (tagType2 !== 0x08 && tagType2 !== 0x09 && tagType2 !== 0x12) continue;
+
+        const dataSize2 = (view.getUint8(nextTagOffset + 5) << 16) | (view.getUint16(nextTagOffset + 6, false));
+        if (dataSize2 === 0 || dataSize2 > MAX_TAG_SIZE) continue;
+
+        // Second tag content validation
+        const tagDataOff2 = nextTagOffset + 15;
+        if (tagDataOff2 >= buffer.byteLength) continue;
+        if (tagType2 === 0x08) {
+            const sf = (view.getUint8(tagDataOff2) >> 4) & 0x0F;
+            if (!VALID_AUDIO_FORMATS.has(sf)) continue;
+        } else if (tagType2 === 0x09) {
+            const ft = (view.getUint8(tagDataOff2) >> 4) & 0x0F;
+            const ci = view.getUint8(tagDataOff2) & 0x0F;
+            if (ft > 5 || !VALID_VIDEO_CODECS.has(ci)) continue;
+        }
+
+        // Two consecutive valid tags — this is a real sync point
+        const tagPos = scanStart + i + 4;
+        const dist = Math.abs(tagPos - approxByte);
+
+        if (dist < best.dist) {
+            best = { pos: tagPos, dist };
+        }
+    }
+
+    return best.pos;
+}
+
+async function rebuildPlayerAt(targetTime) {
+    if (!state.flvFile || !state._flvHeader) return;
+    state._rebuilding = true;
+    // Set offset immediately so getCurrentTime() is accurate during rebuild,
+    // preventing stale _pendingRebuild values from rapid key presses.
+    state._timeOffset = targetTime;
+    console.log('Rebuilding player at', targetTime);
+
+    // Calculate byte offset (approximate — assumes constant bitrate)
+    const duration = getDuration();
+    const ratio = targetTime / (duration || 1);
+    const byteOffset = Math.floor(ratio * state.flvFile.size);
+
+    // Find a valid FLV tag boundary near the estimated offset
+    const syncByte = await findFlvSyncPoint(state.flvFile, byteOffset);
+    console.log('FLV sync point:', syncByte, 'vs estimated:', byteOffset, 'delta:', syncByte - byteOffset);
+
+    // Slice file from sync point, prepend FLV init segment for decoder init.
+    // PreviousTagSize values already track: each one validates the tag BEFORE it,
+    // so the init segment's final PrevTagSize (11 + audioConfigDataSize) correctly
+    // validates the audio config tag, and the tail's own PrevTagSize values will
+    // correctly validate each subsequent tag from the original file.
+    const tail = state.flvFile.slice(syncByte);
+    const newBlob = new Blob([state._flvHeader, tail], { type: 'video/x-flv' });
+    const newUrl = URL.createObjectURL(newBlob);
+
+    // Revoke old blob URL
+    if (state._curBlobUrl) {
+        URL.revokeObjectURL(state._curBlobUrl);
+        state._curBlobUrl = null;
+    }
+    state._curBlobUrl = newUrl;
+
+    // Destroy old player - full cleanup to prevent memory leaks
+    if (state.flvPlayer) {
+        try {
+            state.flvPlayer.detachMediaElement();
+            state.flvPlayer.destroy();
+        } catch (e) { /* destroy may throw if already torn down */ }
+        state.flvPlayer = null;
+    }
+
+    // Release MediaSource held by the video element
+    if (video.srcObject) {
+        try {
+            const ms = video.srcObject;
+            if (ms.readyState === 'open') {
+                const sbs = ms.sourceBuffers;
+                while (sbs.length > 0) ms.removeSourceBuffer(sbs[0]);
+            }
+        } catch (e) { /* MediaSource may already be closed */ }
+        video.srcObject = null;
+    }
+    // Also clear src attribute in case anything is set there
+    video.removeAttribute('src');
+    video.load();
+
+    // Create new player with sliced blob
+    state.flvPlayer = flvjs.createPlayer({
+        type: 'flv',
+        url: newUrl,
+        isLive: false,
+        hasAudio: true,
+        hasVideo: true,
+    });
+
+    state.flvPlayer.on(flvjs.Events.ERROR, (type, detail) => {
+        console.error('flv.js error on rebuild:', type, detail);
+        loadingEl.classList.remove('active');
+        state._rebuilding = false;
+    });
+    state.flvPlayer.on(flvjs.Events.LOADING_COMPLETE, () => {
+        console.log('flv.js loading complete (rebuilt)');
+        loadingEl.classList.remove('active');
+    });
+    state.flvPlayer.on(flvjs.Events.METADATA_ARRIVED, () => {
+        setupCanvas();
+        updateTimeDisplay();
+        video.play().catch(() => {});
+        state.isSeeking = false;
+        loadingEl.classList.remove('active');
+        state._rebuilding = false;
+        // Flag: next non-user seek (flv.js "stuck at 0" auto-seek) needs compensation
+        state._rebuildSeekComp = true;
+
+        // Process any pending seek that arrived during rebuild
+        if (state._pendingRebuild != null) {
+            const pending = state._pendingRebuild;
+            state._pendingRebuild = null;
+            setTimeout(() => seekTo(pending), 150);
+        }
+    });
+
+    state.flvPlayer.attachMediaElement(video);
+    state.flvPlayer.load();
+
+    // Reset danmaku to match new position
+    state.danmakuActive = [];
+    if (state.danmakuAll.length > 0) {
+        const arr = state.danmakuAll;
+        let lo = 0, hi = arr.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >>> 1;
+            if (arr[mid].videoTime < targetTime) lo = mid + 1;
+            else hi = mid;
+        }
+        state.danmakuIndex = lo;
+    }
+}
+
+function formatTime(seconds) {
+    if (!seconds || !isFinite(seconds) || seconds <= 0) return '00:00';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) {
+        return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// Progress bar seeking
+let isDragging = false;
+let dragPreviewTime = 0;
+
+function getSeekTime(e) {
+    const rect = progressContainer.getBoundingClientRect();
+    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    const ratio = x / rect.width;
+    return ratio * getDuration();
+}
+
+progressContainer.addEventListener('mousedown', (e) => {
+    if (!state.flvPlayer) return;
+    isDragging = true;
+    progressContainer.classList.add('dragging');
+    dragPreviewTime = getSeekTime(e);
+    const duration = getDuration() || 1;
+    progressPlayed.style.width = (dragPreviewTime / duration * 100) + '%';
+    progressThumb.style.left = (dragPreviewTime / duration * 100) + '%';
+    timeDisplay.textContent = formatTime(dragPreviewTime) + ' / ' + formatTime(duration);
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    dragPreviewTime = getSeekTime(e);
+    const duration = getDuration() || 1;
+    progressPlayed.style.width = (dragPreviewTime / duration * 100) + '%';
+    progressThumb.style.left = (dragPreviewTime / duration * 100) + '%';
+    timeDisplay.textContent = formatTime(dragPreviewTime) + ' / ' + formatTime(duration);
+});
+
+document.addEventListener('mouseup', () => {
+    if (isDragging) {
+        isDragging = false;
+        progressContainer.classList.remove('dragging');
+        // Only seek on mouseup (final position) to avoid flooding flv.js
+        seekTo(dragPreviewTime);
+    }
+});
+
+// ============================================================
+// Controls
+// ============================================================
+playBtn.addEventListener('click', () => {
+    if (video.paused) {
+        video.play().catch(() => {});
+    } else {
+        video.pause();
+    }
+});
+
+// Click video to toggle play/pause
+video.addEventListener('click', () => {
+    if (video.paused) {
+        video.play().catch(() => {});
+    } else {
+        video.pause();
+    }
+});
+
+muteBtn.addEventListener('click', () => {
+    video.muted = !video.muted;
+    updateMuteBtn();
+});
+
+function updateMuteBtn() {
+    if (video.muted || video.volume === 0) {
+        muteBtn.textContent = '🔇';
+    } else if (video.volume < 0.5) {
+        muteBtn.textContent = '🔉';
+    } else {
+        muteBtn.textContent = '🔊';
+    }
+}
+
+volumeSlider.addEventListener('input', () => {
+    video.volume = volumeSlider.value / 100;
+    video.muted = false;
+    updateMuteBtn();
+});
+
+danmakuToggle.addEventListener('click', () => {
+    settings.showDanmaku = !settings.showDanmaku;
+    danmakuToggle.classList.toggle('off', !settings.showDanmaku);
+    danmakuToggle.textContent = settings.showDanmaku ? '弹幕' : '弹幕';
+    if (settings.showDanmaku) {
+        onSeekComplete();
+    } else {
+        state.danmakuActive = [];
+    }
+});
+
+settingsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpening = !settingsPanel.classList.contains('show');
+    if (isOpening) {
+        // Force display to measure dimensions, then position
+        settingsPanel.style.visibility = 'hidden';
+        settingsPanel.style.display = 'block';
+        const panelW = settingsPanel.offsetWidth;
+        const panelH = settingsPanel.offsetHeight;
+        settingsPanel.style.display = '';
+
+        const btnRect = settingsBtn.getBoundingClientRect();
+        const gap = 8;
+        // Right-align panel above button
+        let left = btnRect.right - panelW;
+        let top = btnRect.top - panelH - gap;
+        // Fallback: below button if not enough room above
+        if (top < 8) top = btnRect.bottom + gap;
+        // Keep within horizontal viewport
+        if (left < 8) left = 8;
+        left = Math.min(left, window.innerWidth - panelW - 8);
+
+        settingsPanel.style.left = left + 'px';
+        settingsPanel.style.top = top + 'px';
+        settingsPanel.style.bottom = 'auto';
+        settingsPanel.style.right = 'auto';
+        settingsPanel.style.visibility = '';
+    }
+    settingsPanel.classList.toggle('show');
+});
+
+folderBtn.addEventListener('click', selectFolder);
+
+fullscreenBtn.addEventListener('click', () => {
+    if (document.fullscreenElement) {
+        document.exitFullscreen();
+    } else {
+        playerContainer.requestFullscreen();
+    }
+});
+
+// Fullscreen control bar auto-hide
+let fsIdleTimer = null;
+const FS_IDLE_DELAY = 3000;
+
+function showControls() {
+    $('control-bar').classList.remove('hidden');
+    $('video-wrapper').classList.remove('idle-cursor');
+}
+function hideControls() {
+    $('control-bar').classList.add('hidden');
+    $('video-wrapper').classList.add('idle-cursor');
+}
+function resetFsIdleTimer() {
+    if (!document.fullscreenElement) return;
+    showControls();
+    clearTimeout(fsIdleTimer);
+    fsIdleTimer = setTimeout(hideControls, FS_IDLE_DELAY);
+}
+
+const videoWrapper = $('video-wrapper');
+videoWrapper.addEventListener('mousemove', resetFsIdleTimer);
+videoWrapper.addEventListener('mousedown', resetFsIdleTimer);
+
+document.addEventListener('fullscreenchange', () => {
+    fullscreenBtn.textContent = document.fullscreenElement ? '⛶' : '⛶';
+    fullscreenBtn.style.color = document.fullscreenElement ? '#4ecdc4' : '';
+    if (document.fullscreenElement) {
+        resetFsIdleTimer();
+    } else {
+        clearTimeout(fsIdleTimer);
+        fsIdleTimer = null;
+        showControls();
+    }
+    setTimeout(setupCanvas, 100);
+});
+
+document.addEventListener('click', (e) => {
+    if (!settingsPanel.contains(e.target) && e.target !== settingsBtn) {
+        settingsPanel.classList.remove('show');
+    }
+});
+
+// ============================================================
+// Settings
+// ============================================================
+const settingSize = $('setting-size');
+const settingPosition = $('setting-position');
+const settingOpacity = $('setting-opacity');
+const settingDensity = $('setting-density');
+const settingOffset = $('setting-offset');
+
+settingSize.addEventListener('input', () => {
+    settings.fontSize = Number(settingSize.value);
+    $('val-size').textContent = settings.fontSize + 'px';
+});
+
+settingPosition.addEventListener('change', () => {
+    settings.position = settingPosition.value;
+});
+
+settingOpacity.addEventListener('input', () => {
+    settings.opacity = Number(settingOpacity.value) / 100;
+    $('val-opacity').textContent = settingOpacity.value + '%';
+});
+
+settingDensity.addEventListener('input', () => {
+    settings.density = Number(settingDensity.value) / 100;
+    $('val-density').textContent = settingDensity.value + '%';
+    // Re-filter danmaku
+    if (state.danmakuRaw.length > 0) {
+        applyDanmakuDensity();
+        onSeekComplete();
+    }
+});
+
+settingOffset.addEventListener('input', () => {
+    settings.offset = Number(settingOffset.value);
+    $('val-offset').textContent = (settings.offset >= 0 ? '+' : '') + settings.offset + 's';
+    // Recalculate all danmaku video times
+    if (state.danmakuRaw.length > 0) {
+        applyDanmakuDensity();
+        onSeekComplete();
+    }
+});
+
+const settingShowTime = $('setting-showtime');
+settingShowTime.addEventListener('change', () => {
+    settings.showDanmakuTime = settingShowTime.checked;
+});
+
+// ============================================================
+// Keyboard Shortcuts
+// ============================================================
+document.addEventListener('keydown', (e) => {
+    // Ignore when typing in inputs
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+
+    switch (e.code) {
+        case 'Space':
+            e.preventDefault();
+            if (video.paused) {
+                video.play().catch(() => {});
+            } else {
+                video.pause();
+            }
+            break;
+        case 'KeyM':
+            video.muted = !video.muted;
+            updateMuteBtn();
+            break;
+        case 'KeyD':
+            settings.showDanmaku = !settings.showDanmaku;
+            danmakuToggle.classList.toggle('off', !settings.showDanmaku);
+            if (settings.showDanmaku) onSeekComplete();
+            else state.danmakuActive = [];
+            break;
+        case 'ArrowLeft':
+            e.preventDefault();
+            if (!e.repeat && !video.paused) { video.pause(); state._seekResume = true; }
+            seekTo(getCurrentTime() - 5);
+            break;
+        case 'ArrowRight':
+            e.preventDefault();
+            if (!e.repeat && !video.paused) { video.pause(); state._seekResume = true; }
+            seekTo(getCurrentTime() + 5);
+            break;
+        case 'ArrowUp':
+            e.preventDefault();
+            video.volume = Math.min(1, video.volume + 0.1);
+            volumeSlider.value = Math.round(video.volume * 100);
+            video.muted = false;
+            updateMuteBtn();
+            break;
+        case 'ArrowDown':
+            e.preventDefault();
+            video.volume = Math.max(0, video.volume - 0.1);
+            volumeSlider.value = Math.round(video.volume * 100);
+            video.muted = false;
+            updateMuteBtn();
+            break;
+        case 'KeyF':
+            e.preventDefault();
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            } else {
+                playerContainer.requestFullscreen();
+            }
+            break;
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+        if (state._seekResume) {
+            state._seekResume = false;
+            video.play().catch(() => {});
+        }
+    }
+});
+
+// ============================================================
+// Init
+// ============================================================
+// Show keyboard hint after a short delay
+setTimeout(() => {
+    if (playerContainer.style.display === 'flex') {
+        kbdHint.style.display = 'block';
+    }
+}, 5000);
+
+// Hide keyboard hint on first interaction
+document.addEventListener('click', () => {
+    kbdHint.style.display = 'none';
+}, { once: false });
+</script>
+</body>
+</html>
