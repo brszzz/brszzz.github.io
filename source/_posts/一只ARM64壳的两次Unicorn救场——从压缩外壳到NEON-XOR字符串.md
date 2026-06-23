@@ -1,5 +1,5 @@
 ---
-title: 一只 ARM64 壳的两次 Unicorn 救场 —— 从压缩外壳到 NEON XOR 字符串
+title: 压缩壳静态脚本脱取和NEON-XOR字符串解密分析
 date: 2026-06-23 20:16:00
 tags:
   - ARM64
@@ -18,7 +18,7 @@ categories:
 description: 同一把刀削两层皮。Phase 1 用 Unicorn 模拟脱掉自解压外壳拿到原 ELF，Phase 2 再用 Unicorn 把里面 800+ 处 NEON XOR 字符串混淆全捞出来。两阶段共 450 行 Python，75 秒完成。
 ---
 
-# 一只 ARM64 壳的两次 Unicorn 救场:从压缩外壳到 NEON XOR 字符串
+# 压缩壳静态脚本脱取和NEON-XOR字符串解密分析
 
 > 同一把刀,削两层皮。先用 Unicorn 模拟脱掉自解压外壳拿到原 ELF,再用 Unicorn 模拟把里面 800+ 处 NEON XOR 字符串混淆全捞出来。两阶段开发日记。
 
